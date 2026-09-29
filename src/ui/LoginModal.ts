@@ -19,6 +19,12 @@ export class LoginModal extends Modal {
     private regConfirmPassword = '';
     private regCaptchaInput = '';
 
+    // Reset password fields
+    private resetEmail = '';
+    private resetCode = '';
+    private resetPassword = '';
+    private resetConfirmPassword = '';
+
     // Captcha
     private captchaSvg = '';
 
@@ -100,7 +106,160 @@ export class LoginModal extends Modal {
                         this.renderRegister();
                     })();
                 })
+            )
+            .addButton(button => button
+                .setButtonText('忘记密码')
+                .onClick(() => {
+                    this.renderReset();
+                })
             );
+    }
+
+    private renderReset() {
+        this.isRegisterMode = false;
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass('team-login-modal');
+
+        contentEl.createEl('h2', { text: '重置密码' });
+        contentEl.createEl('p', { text: '输入注册邮箱，我们会发送 6 位验证码。', cls: 'setting-item-description' });
+
+        new Setting(contentEl)
+            .setName('邮箱')
+            .addText(text => text
+                .setPlaceholder('注册时使用的邮箱')
+                .setValue(this.resetEmail)
+                .onChange(value => { this.resetEmail = value; })
+            )
+            .addButton(button => button
+                .setButtonText('发送验证码')
+                .onClick(() => {
+                    void this.handleSendResetCode(button);
+                })
+            );
+
+        new Setting(contentEl)
+            .setName('验证码')
+            .addText(text => text
+                .setPlaceholder('6 位数字')
+                .setValue(this.resetCode)
+                .onChange(value => { this.resetCode = value; })
+            );
+
+        new Setting(contentEl)
+            .setName('新密码')
+            .addText(text => {
+                text.setPlaceholder('至少 6 位')
+                    .setValue(this.resetPassword)
+                    .onChange(value => { this.resetPassword = value; });
+                text.inputEl.type = 'password';
+            });
+
+        new Setting(contentEl)
+            .setName('确认新密码')
+            .addText(text => {
+                text.setPlaceholder('再次输入新密码')
+                    .setValue(this.resetConfirmPassword)
+                    .onChange(value => { this.resetConfirmPassword = value; });
+                text.inputEl.type = 'password';
+            });
+
+        new Setting(contentEl)
+            .addButton(button => button
+                .setButtonText('重置密码')
+                .setCta()
+                .onClick(() => {
+                    void this.handleResetPassword();
+                })
+            )
+            .addButton(button => button
+                .setButtonText('返回登录')
+                .onClick(() => {
+                    void (async () => {
+                        await this.loadCaptcha();
+                        this.renderLogin();
+                    })();
+                })
+            );
+    }
+
+    private async handleSendResetCode(button: { setDisabled: (disabled: boolean) => void; setButtonText: (text: string) => void }) {
+        const email = this.resetEmail.trim();
+        if (!email) {
+            new Notice('请输入邮箱');
+            return;
+        }
+        if (!this.plugin.settings.serverUrl) {
+            new Notice('请先在设置中配置服务器地址');
+            return;
+        }
+
+        button.setDisabled(true);
+        button.setButtonText('发送中...');
+        try {
+            const response = await requestUrl({
+                url: `${this.plugin.settings.serverUrl}/api/auth/forgot-password`,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+            const data = readResponseJson<{ success: boolean; message?: string; error?: string }>(response);
+            if (!data.success) {
+                new Notice(data.error || '发送失败');
+                return;
+            }
+            new Notice(data.message || '验证码已发送');
+        } catch (e: unknown) {
+            console.error('Send reset code error:', e);
+            new Notice('发送失败，请检查网络和服务器地址');
+        } finally {
+            button.setDisabled(false);
+            button.setButtonText('发送验证码');
+        }
+    }
+
+    private async handleResetPassword() {
+        if (!this.resetEmail.trim() || !this.resetCode.trim() || !this.resetPassword) {
+            new Notice('请填写邮箱、验证码和新密码');
+            return;
+        }
+        if (this.resetPassword !== this.resetConfirmPassword) {
+            new Notice('两次输入的密码不一致');
+            return;
+        }
+        if (this.resetPassword.length < 6) {
+            new Notice('密码至少 6 个字符');
+            return;
+        }
+
+        try {
+            const response = await requestUrl({
+                url: `${this.plugin.settings.serverUrl}/api/auth/reset-password`,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: this.resetEmail.trim(),
+                    code: this.resetCode.trim(),
+                    newPassword: this.resetPassword,
+                }),
+            });
+            const data = readResponseJson<{ success: boolean; message?: string; error?: string }>(response);
+            if (!data.success) {
+                new Notice(data.error || '重置失败');
+                return;
+            }
+            this.password = '';
+            this.account = this.resetEmail.trim();
+            this.resetCode = '';
+            this.resetPassword = '';
+            this.resetConfirmPassword = '';
+            new Notice(data.message || '密码已重置，请登录');
+            await this.loadCaptcha();
+            this.renderLogin();
+        } catch (e: unknown) {
+            console.error('Reset password error:', e);
+            new Notice('重置失败，请检查网络和服务器地址');
+        }
     }
 
     private renderRegister() {
