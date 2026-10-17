@@ -7,6 +7,7 @@ import { Summarizer } from './ai';
 import { DailyReport, MonthlyReport } from './reports';
 import { ReportModal, TeamView, TEAM_VIEW_TYPE, LoginModal, CreateTeamModal } from './ui';
 import { CommentModal } from './ui/CommentModal';
+import { devLog, setDevLogEnabled } from './utils/devLog';
 
 export default class TeamPlugin extends Plugin {
     settings: TeamPluginSettings;
@@ -34,6 +35,8 @@ export default class TeamPlugin extends Plugin {
     async onload() {
         // Load settings
         await this.loadSettings();
+        setDevLogEnabled(this.settings.debugMode);
+        devLog('Loading Team Collaboration Plugin');
 
         // Initialize modules
         this.initializeModules();
@@ -128,6 +131,7 @@ export default class TeamPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+        setDevLogEnabled(this.settings.debugMode);
         this.updateModules();
     }
 
@@ -341,9 +345,11 @@ export default class TeamPlugin extends Plugin {
                         // 只有通过插件分享过的文档才进入协同；手动创建的文件不在云端，不启动协同
                         const docs = await this.teamManager.getTeamDocuments(team.id);
                         const doc = docs.find(d => d.path === file.path);
+                        devLog('[AutoMount] 文件检查', { path: file.path, matched: !!doc, count: docs.length });
                         if (!doc) return;
 
                         if (!this.collabEditor.isActive || this.collabEditor.activeFilePath !== file.path) {
+                            devLog('[AutoMount] 启动协同', file.path);
                             if (this.collabEditor.isActive) {
                                 this.collabEditor.stopCollab();
                             }
@@ -352,6 +358,8 @@ export default class TeamPlugin extends Plugin {
                                 && member.role !== 'viewer'
                                 && (doc.permission !== 'read' || member.role === 'owner' || member.role === 'admin');
                             await this.collabEditor.startCollab(team.id, file, { readOnly: !canEdit, documentId: doc.id });
+                        } else {
+                            devLog('[AutoMount] 已在协同中', file.path);
                         }
                     }
                 } catch (e) {

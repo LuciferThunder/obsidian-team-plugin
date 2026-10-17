@@ -1,5 +1,6 @@
 import { App, ItemView, WorkspaceLeaf, Menu, Modal, Notice, requestUrl, setIcon, TFile, TFolder, FuzzySuggestModal } from 'obsidian';
 import { formatHourMinute } from '../utils/dates';
+import { devLog } from '../utils/devLog';
 import type TeamPlugin from '../main';
 import { Team, TeamMember, TeamRole } from '../types/team';
 import type { TeamMention } from '../core/TeamManager';
@@ -66,7 +67,8 @@ export class TeamView extends ItemView {
 
     private reconnectTimer: number | null = null;
 
-    private logTeamWs(_action: string, _detail?: Record<string, unknown>): void {
+    private logTeamWs(action: string, detail?: Record<string, unknown>): void {
+        devLog(`[TeamCollab] ${action}`, detail);
     }
 
     /** 连接团队事件 WebSocket，收到 team_drive_changed 时自动刷新 */

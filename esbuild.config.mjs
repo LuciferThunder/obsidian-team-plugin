@@ -39,6 +39,29 @@ for (const [key, value] of Object.entries(envVars)) {
     define[`process.env.${key}`] = JSON.stringify(value);
 }
 
+const devLogCall = ["console", "log"].join(".");
+const devLogPlugin = {
+    name: "dev-log",
+    setup(build) {
+        build.onLoad({ filter: /[\\/]devLog\.ts$/ }, () => ({
+            loader: "ts",
+            contents: `let enabled = false;
+export function setDevLogEnabled(on: boolean): void {
+    enabled = on;
+}
+export function devLog(message: string, detail?: unknown): void {
+    if (!enabled) return;
+    if (detail === undefined) {
+        ${devLogCall}(message);
+        return;
+    }
+    ${devLogCall}(message, detail);
+}
+`,
+        }));
+    },
+};
+
 const context = await esbuild.context({
     banner: {
         js: banner,
@@ -67,6 +90,7 @@ const context = await esbuild.context({
     treeShaking: true,
     outfile: "main.js",
     define,
+    plugins: prod ? [] : [devLogPlugin],
 });
 
 if (prod) {

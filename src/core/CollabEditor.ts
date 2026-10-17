@@ -15,6 +15,7 @@ import { Compartment } from '@codemirror/state';
 import { getMarkdownEditorView } from '../utils/obsidian';
 import { AnnotationHost, teamAnnotationExtension } from './DocAnnotations';
 import { MentionHost, teamMentionExtension } from './DocMentions';
+import { devLog } from '../utils/devLog';
 
 /** 协同会话信息 */
 interface CollabSession {
@@ -90,6 +91,7 @@ export class CollabEditor {
         const ydoc = new Y.Doc();
         const ytext = ydoc.getText('codemirror');
 
+        devLog('[CollabEditor] WebSocket', { url: wsUrl, room: roomName });
         const provider = new WebsocketProvider(wsUrl, roomName, ydoc, {
             params: {
                 token: this.settings.apiKey,
@@ -111,6 +113,7 @@ export class CollabEditor {
 
         // 监听连接状态
         provider.on('status', (event: { status: string }) => {
+            devLog('[CollabEditor] Provider 状态', event.status);
             if (event.status === 'connected') {
                 this.publishPresence(file, provider);
             } else if (event.status === 'disconnected') {
@@ -138,6 +141,7 @@ export class CollabEditor {
             }
             window.setTimeout(() => resolve(), 5000);
         });
+        devLog('[CollabEditor] 同步结束', { length: ytext.length, connected: provider.wsconnected });
 
         // 如果这是新文档（服务器上还没有内容），用本地内容初始化
         // 优先使用 EditorView 当前内容（含未保存编辑），否则用 vault 文件内容
@@ -153,6 +157,7 @@ export class CollabEditor {
 
         // 等待编辑器完全渲染就绪（Obsidian 的 file-open 事件触发时 MarkdownView 可能还没初始化完成）
         await new Promise<void>(resolve => window.setTimeout(resolve, 600));
+        devLog('[CollabEditor] 开始绑定编辑器', { length: ytext.length, synced: provider.synced });
 
         // 绑定到 CodeMirror 6 编辑器
         const cleanup = this.bindToEditor(file, ydoc, provider);
@@ -253,9 +258,11 @@ export class CollabEditor {
                 console.error('[CollabEditor] 挂载协同失败', error);
                 new Notice('协同编辑启动失败');
             }
+            devLog('[CollabEditor] 协同扩展已挂上');
         };
 
         const editorView = this.getEditorView(file);
+        devLog('[CollabEditor] EditorView', editorView ? '已拿到' : '稍后重试');
         if (editorView) {
             doInject(editorView);
         } else {
@@ -267,6 +274,7 @@ export class CollabEditor {
                 if (isCleaned) return;
                 retries++;
                 const ev = this.getEditorView(file);
+                devLog('[CollabEditor] 重试获取 EditorView', { retry: retries, found: !!ev });
                 if (ev) {
                     doInject(ev);
                 } else if (retries < maxRetries) {
