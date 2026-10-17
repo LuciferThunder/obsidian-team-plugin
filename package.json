@@ -1,6 +1,6 @@
 {
     "name": "obsidian-team-plugin",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "description": "Shared vault collaboration plugin for Obsidian teams.",
     "main": "main.js",
     "scripts": {

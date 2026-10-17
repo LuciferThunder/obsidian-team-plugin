@@ -10,6 +10,7 @@ export interface TeamDocument {
     createdAt: number;
     updatedAt: number;
     contentLength?: number;
+    permission?: 'read' | 'write';
 }
 
 export type { DocumentPermission };

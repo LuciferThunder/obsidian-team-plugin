@@ -205,7 +205,7 @@ export class PluginSync {
         md += '|---------|-----|------|------|\n';
 
         for (const plugin of plugins) {
-            const status = plugin.enabled ? '✅ 启用' : '❌ 禁用';
+            const status = plugin.enabled ? '启用' : '禁用';
             md += `| ${plugin.name} | ${plugin.id} | ${plugin.version} | ${status} |\n`;
         }
 

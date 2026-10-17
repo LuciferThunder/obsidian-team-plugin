@@ -31,7 +31,7 @@ export class ConflictModal extends Modal {
         contentEl.empty();
         contentEl.addClass('team-conflict-modal');
 
-        contentEl.createEl('h2', { text: '⚠️ 版本冲突' });
+        contentEl.createEl('h2', { text: '版本冲突' });
         contentEl.createEl('p', {
             text: `文件「${this.filePath}」存在版本冲突。服务器上的文件已被 ${this.conflict.serverFile.lastEditorName} 修改。`,
             cls: 'conflict-desc'
@@ -40,11 +40,11 @@ export class ConflictModal extends Modal {
         const infoDiv = contentEl.createDiv('conflict-info');
 
         const localInfo = infoDiv.createDiv();
-        localInfo.createEl('strong', { text: '📄 本地版本' });
+        localInfo.createEl('strong', { text: '本地版本' });
         localInfo.createEl('p', { text: `${this.conflict.localContent.length} 字符` });
 
         const serverInfo = infoDiv.createDiv();
-        serverInfo.createEl('strong', { text: '☁️ 服务器版本' });
+        serverInfo.createEl('strong', { text: '服务器版本' });
         serverInfo.createEl('p', {
             text: `${this.conflict.serverFile.content.length} 字符 (v${this.conflict.serverFile.version}, 编辑者: ${this.conflict.serverFile.lastEditorName})`
         });

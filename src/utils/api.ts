@@ -33,6 +33,15 @@ export interface TeamDriveChangedMessage {
     type?: string;
     deleted?: string[];
     renamed?: Array<{ from: string; to: string }>;
+    users?: Array<{ userId: string; username: string }>;
+    id?: string;
+    recipientId?: string;
+    actorName?: string;
+    fileId?: string;
+    filePath?: string;
+    kind?: string;
+    excerpt?: string;
+    createdAt?: number;
 }
 
 export interface JwtPayload {

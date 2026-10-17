@@ -163,12 +163,12 @@ export class TeamPluginSettingTab extends PluginSettingTab {
                         try {
                             const success = await this.plugin.summarizer.testConnection();
                             if (success) {
-                                new Notice('✅ AI 连接成功！');
+                                new Notice('AI 连接成功');
                             } else {
-                                new Notice('❌ AI 连接失败，请检查配置');
+                                new Notice('AI 连接失败，请检查配置');
                             }
                         } catch (e) {
-                            new Notice(`❌ 连接错误: ${e}`);
+                            new Notice(`连接错误: ${e}`);
                         } finally {
                             button.setDisabled(false);
                             button.setButtonText('测试连接');

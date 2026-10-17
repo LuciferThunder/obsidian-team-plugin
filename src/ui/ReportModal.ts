@@ -115,9 +115,9 @@ export class ReportModal extends Modal {
         try {
             const onProgress = (current: number, total: number, docTitle?: string) => {
                 if (docTitle === '正在生成报告...') {
-                    progressDiv.textContent = `📝 正在汇总生成最终报告...`;
+                    progressDiv.textContent = `正在汇总生成最终报告...`;
                 } else {
-                    progressDiv.textContent = `🔍 分析文档 ${current}/${total}：${docTitle || ''}`;
+                    progressDiv.textContent = `分析文档 ${current}/${total}：${docTitle || ''}`;
                 }
             };
 

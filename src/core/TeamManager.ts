@@ -4,6 +4,16 @@ import { TeamPluginSettings } from '../types';
 import { DocumentHistoryEntry, DocumentHistorySnapshot, TeamDocument } from '../types/document';
 import { extractApiError, getErrorMessage, readResponseJson } from '../utils/api';
 
+export interface TeamMention {
+    id: string;
+    actorName: string;
+    fileId: string;
+    filePath: string;
+    kind: string;
+    excerpt: string;
+    createdAt: number;
+}
+
 export class TeamManager {
     private app: App;
     private settings: TeamPluginSettings;
@@ -95,6 +105,14 @@ export class TeamManager {
     /**
      * Update team settings
      */
+    async updateTeamProfile(teamId: string, profile: { name: string; description: string }): Promise<Team> {
+        const team = await this.request<Team>(`/api/teams/${teamId}`, 'PATCH', profile);
+        if (this.currentTeam?.id === teamId) {
+            this.currentTeam = team;
+        }
+        return team;
+    }
+
     async updateTeamSettings(teamId: string, settings: Partial<TeamSettings>): Promise<Team> {
         return await this.request<Team>(`/api/teams/${teamId}/settings`, 'PATCH', settings);
     }
@@ -246,5 +264,33 @@ export class TeamManager {
      */
     async getTeamDocumentHistorySnapshot(teamId: string, documentId: string, historyId: string): Promise<DocumentHistorySnapshot> {
         return await this.request<DocumentHistorySnapshot>(`/api/collab/${teamId}/files/${documentId}/history/${historyId}`, 'GET');
+    }
+
+    async searchDocuments(teamId: string, query: string): Promise<Array<{ id: string; path: string; permission?: string; lastEditorName?: string }>> {
+        return await this.request(`/api/collab/${teamId}/search?q=${encodeURIComponent(query)}`, 'GET');
+    }
+
+    async getComments(teamId: string, fileId: string): Promise<Array<{ id: string; authorName: string; quote: string; body: string; mentions?: string[]; createdAt: number }>> {
+        return await this.request(`/api/collab/${teamId}/files/${fileId}/comments`, 'GET');
+    }
+
+    async addComment(teamId: string, fileId: string, quote: string, body: string): Promise<void> {
+        await this.request(`/api/collab/${teamId}/files/${fileId}/comments`, 'POST', { quote, body });
+    }
+
+    async notifyMention(teamId: string, fileId: string, username: string, excerpt: string): Promise<void> {
+        await this.request(`/api/collab/${teamId}/files/${fileId}/mentions`, 'POST', { username, excerpt });
+    }
+
+    async getMentions(teamId: string): Promise<TeamMention[]> {
+        return await this.request<TeamMention[]>(`/api/teams/${teamId}/mentions`, 'GET');
+    }
+
+    async setDocumentPermission(teamId: string, fileId: string, permission: 'read' | 'write'): Promise<void> {
+        await this.request(`/api/collab/${teamId}/files/${fileId}/permission`, 'PATCH', { permission });
+    }
+
+    async getActivity(teamId: string): Promise<Array<{ actorName: string; action: string; detail: string; createdAt: number }>> {
+        return await this.request(`/api/teams/${teamId}/activity`, 'GET');
     }
 }

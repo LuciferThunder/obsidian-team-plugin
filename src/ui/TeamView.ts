@@ -1,12 +1,15 @@
-import { App, ItemView, WorkspaceLeaf, Menu, Notice, requestUrl, TFile, FuzzySuggestModal } from 'obsidian';
+import { App, ItemView, WorkspaceLeaf, Menu, Modal, Notice, requestUrl, setIcon, TFile, TFolder, FuzzySuggestModal } from 'obsidian';
 import type TeamPlugin from '../main';
-import { Team, TeamMember } from '../types/team';
+import { Team, TeamMember, TeamRole } from '../types/team';
+import type { TeamMention } from '../core/TeamManager';
 import { TeamDocument } from '../types/document';
 import { getErrorMessage, readResponseJson, TeamDriveChangedMessage } from '../utils/api';
 import { CreateTeamModal } from './CreateTeamModal';
 import { InviteMemberModal } from './InviteMemberModal';
 import { LoginModal } from './LoginModal';
 import { HistoryModal } from './HistoryModal';
+import { CommentModal } from './CommentModal';
+import { EditTeamModal } from './EditTeamModal';
 export const TEAM_VIEW_TYPE = 'team-view';
 
 export class TeamView extends ItemView {
@@ -17,6 +20,10 @@ export class TeamView extends ItemView {
     private teamWsTeamId: string | null = null;
     private isDisconnectingWs = false;
     private renderInProgress = false;
+    private onlineUserIds = new Set<string>();
+    private searchQuery = '';
+    private activity: Array<{ actorName: string; action: string; detail: string; createdAt: number }> = [];
+    private mentions: TeamMention[] = [];
 
     constructor(leaf: WorkspaceLeaf, plugin: TeamPlugin) {
         super(leaf);
@@ -95,6 +102,19 @@ export class TeamView extends ItemView {
                 ws.onmessage = async (ev) => {
                     try {
                         const data = JSON.parse(ev.data as string) as TeamDriveChangedMessage;
+                        if (data.type === 'presence' && Array.isArray(data.users)) {
+                            this.onlineUserIds = new Set(data.users.map(user => user.userId));
+                            this.paintOnline();
+                            return;
+                        }
+                        if (data.type === 'mention' && data.recipientId === this.plugin.settings.userId && data.filePath) {
+                            this.rememberMention(data);
+                            new Notice(this.mentionText(data));
+                            window.setTimeout(() => {
+                                void this.render();
+                            }, this.renderInProgress ? 400 : 0);
+                            return;
+                        }
                         if (data.type === 'team_drive_changed') {
                             const deleted = data.deleted ?? [];
                             const renamed = data.renamed ?? [];
@@ -118,6 +138,15 @@ export class TeamView extends ItemView {
                                     } catch {
                                         this.plugin.pendingRemoteRenames.delete(from);
                                         // 重命名失败时忽略
+                                    }
+                                }
+                                const parentPath = from.split('/').slice(0, -1).join('/');
+                                const parent = this.app.vault.getAbstractFileByPath(parentPath);
+                                if (parent instanceof TFolder && parent.children.length === 0) {
+                                    try {
+                                        await this.app.vault.delete(parent, true);
+                                    } catch {
+                                        // 空目录删不掉时忽略
                                     }
                                 }
                             }
@@ -201,7 +230,13 @@ export class TeamView extends ItemView {
 
         // Header
         const header = container.createDiv('team-view-header');
-        header.createEl('h4', { text: '团队协作' });
+        const titleRow = header.createDiv('team-header-row');
+        titleRow.createEl('h4', { text: '团队协作' });
+        if (this.plugin.settings.apiKey) {
+            this.iconButton(titleRow, 'log-out', '退出登录', 'team-icon-btn', () => {
+                void this.logout();
+            });
+        }
         const currentUserEl = header.createEl('p', { cls: 'team-current-user' });
         currentUserEl.textContent = `当前用户: ${this.plugin.settings.username || '未设置'}`;
 
@@ -227,8 +262,22 @@ export class TeamView extends ItemView {
         await this.renderTeamSelector(container);
 
         if (this.currentTeam) {
+            try {
+                this.activity = await this.plugin.teamManager.getActivity(this.currentTeam.id);
+            } catch {
+                this.activity = [];
+            }
+            try {
+                const fresh = await this.plugin.teamManager.getMentions(this.currentTeam.id);
+                this.mentions = this.mergeMentions(fresh);
+            } catch {
+                this.mentions = this.mentions.slice(0, 20);
+            }
+            this.renderTeamCard(container);
             // Members section
             this.renderMembers(container);
+            this.renderMentions(container);
+            this.renderActivity(container);
 
             // Team Drive documents section
             await this.renderTeamDrive(container);
@@ -297,7 +346,7 @@ export class TeamView extends ItemView {
             const invitations = await this.plugin.teamManager.getMyInvitations();
             if (invitations && invitations.length > 0) {
                 const inviteDiv = container.createDiv('team-invitations');
-                inviteDiv.createEl('h5', { text: `📬 你有 ${invitations.length} 个待处理邀请` });
+                this.sectionHeading(inviteDiv, 'mail', `你有 ${invitations.length} 个待处理邀请`);
 
                 for (const inv of invitations) {
                     const item = inviteDiv.createDiv('invitation-item');
@@ -306,14 +355,14 @@ export class TeamView extends ItemView {
                     item.createEl('span', { text: `${inviterLabel} 邀请你加入「${teamLabel}」(${inv.role === 'member' ? '成员' : inv.role === 'admin' ? '管理员' : inv.role})` });
 
                     const actions = item.createDiv('invitation-actions');
-                    const acceptBtn = actions.createEl('button', { text: '✅ 接受', cls: 'action-btn accept-btn' });
-                    const rejectBtn = actions.createEl('button', { text: '❌ 拒绝', cls: 'action-btn reject-btn' });
+                    const acceptBtn = actions.createEl('button', { text: '接受', cls: 'action-btn accept-btn' });
+                    const rejectBtn = actions.createEl('button', { text: '拒绝', cls: 'action-btn reject-btn' });
 
                     acceptBtn.addEventListener('click', () => {
                         void (async () => {
                             try {
                                 const newTeam = await this.plugin.teamManager.acceptInvitation(inv.id);
-                                new Notice(`✅ 已成功加入团队: ${newTeam.name}`);
+                                new Notice(`已加入团队: ${newTeam.name}`);
                                 this.plugin.settings.currentTeamId = newTeam.id;
                                 await this.plugin.saveSettings();
                                 this.currentTeam = newTeam;
@@ -385,27 +434,241 @@ export class TeamView extends ItemView {
         });
 
         // Create team button
-        const createBtn = selectorDiv.createEl('button', {
-            text: '+',
-            cls: 'team-create-btn',
-            attr: { title: '创建新团队' }
-        });
-
-        createBtn.addEventListener('click', () => {
+        this.iconButton(selectorDiv, 'plus', '创建新团队', 'team-create-btn team-icon-btn', () => {
             new CreateTeamModal(this.app, this.plugin).open();
         });
+    }
+
+    private iconButton(parent: Element, icon: string, label: string, cls: string, onClick: (event: MouseEvent) => void): HTMLButtonElement {
+        const button = (parent as HTMLElement).createEl('button', {
+            cls,
+            attr: { 'aria-label': label, title: label },
+        });
+        setIcon(button, icon);
+        const iconOnly = cls.split(' ').some(name => name === 'doc-icon-btn' || name === 'team-icon-btn');
+        if (!iconOnly) {
+            button.createSpan({ text: label, cls: 'team-btn-label' });
+        }
+        button.type = 'button';
+        const stop = (event: Event) => event.stopPropagation();
+        button.addEventListener('pointerdown', stop);
+        button.addEventListener('mousedown', stop);
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClick(event);
+        });
+        return button;
+    }
+
+    private sectionHeading(parent: Element, icon: string, text: string): void {
+        const heading = (parent as HTMLElement).createEl('h5', { cls: 'team-section-title' });
+        setIcon(heading.createSpan({ cls: 'team-section-icon' }), icon);
+        heading.createSpan({ text });
+    }
+
+    private renderTeamCard(container: Element): void {
+        if (!this.currentTeam) return;
+        const team = this.currentTeam;
+        const card = container.createDiv('team-card');
+        const main = card.createDiv('team-card-main');
+        main.createEl('h3', { text: team.name, cls: 'team-card-name' });
+        const description = team.description?.trim();
+        main.createEl('p', {
+            text: description || '还没有简介',
+            cls: description ? 'team-card-desc' : 'team-card-desc is-empty',
+        });
+        const me = team.members.find(member => member.userId === this.plugin.settings.userId);
+        if (me) {
+            main.createSpan({ text: this.getRoleText(me.role), cls: 'team-card-role' });
+        }
+        if (this.plugin.teamManager.hasPermission('manage_settings')) {
+            this.iconButton(card, 'pencil', '编辑团队', 'team-icon-btn', () => {
+                new EditTeamModal(this.app, this.plugin, team, () => {
+                    void this.render();
+                }).open();
+            });
+            const row = card.createDiv('team-setting-row');
+            row.createSpan({ text: '允许成员邀请' });
+            const toggle = row.createEl('input', { type: 'checkbox' });
+            toggle.checked = !!team.settings?.allowMemberInvite;
+            toggle.addEventListener('change', () => {
+                void this.plugin.teamManager.updateTeamSettings(team.id, { allowMemberInvite: toggle.checked })
+                    .then(updated => {
+                        this.currentTeam = updated;
+                        this.plugin.teamManager.setCurrentTeam(updated);
+                    })
+                    .catch((error: unknown) => {
+                        toggle.checked = !toggle.checked;
+                        new Notice(getErrorMessage(error) || '设置失败');
+                    });
+            });
+        }
+    }
+
+    private async logout(): Promise<void> {
+        this.disconnectTeamWebSocket();
+        this.plugin.settings.apiKey = '';
+        this.plugin.settings.userId = '';
+        this.plugin.settings.username = '';
+        this.currentTeam = null;
+        this.plugin.teamManager.setCurrentTeam(null);
+        await this.plugin.saveSettings();
+        await this.render();
+    }
+
+    private paintOnline(): void {
+        this.contentEl.querySelectorAll<HTMLElement>('.member-item').forEach(item => {
+            const userId = item.getAttribute('data-user-id');
+            const online = !!userId && this.onlineUserIds.has(userId);
+            const badge = item.querySelector('.member-online');
+            if (online && !badge) {
+                const info = item.querySelector('.member-info') as HTMLElement | null;
+                info?.createSpan({ text: '在线', cls: 'member-online' });
+            } else if (!online && badge) {
+                badge.remove();
+            }
+        });
+    }
+
+    private activitySubject(item: { action: string; detail: string }): string {
+        if (item.action === 'permission' || item.action === 'team_updated') {
+            return item.detail.split(' → ')[0];
+        }
+        if (item.action === 'comment') return item.detail.split(':')[0];
+        return item.detail;
+    }
+
+    /** 同一人反复改同一篇文档的权限，只留最新一条 */
+    private compactActivity(): Array<{ actorName: string; action: string; detail: string; createdAt: number }> {
+        const seen = new Set<string>();
+        const rows = [];
+        for (const item of this.activity) {
+            if (item.action === 'permission') {
+                const key = `${item.actorName}\0${this.activitySubject(item)}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+            }
+            rows.push(item);
+            if (rows.length >= 5) break;
+        }
+        return rows;
+    }
+
+    private shortFileName(path: string): string {
+        const base = (path.split('/').pop() || path).replace(/\.md$/i, '');
+        return base.length > 14 ? `${base.slice(0, 14)}…` : base;
+    }
+
+    private relativeTime(ts: number): string {
+        const delta = Date.now() - ts;
+        if (delta < 60_000) return '刚刚';
+        if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`;
+        const date = new Date(ts);
+        const hm = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        if (ts >= start.getTime()) return hm;
+        return `${date.getMonth() + 1}/${date.getDate()} ${hm}`;
+    }
+
+    private activityLine(item: { actorName: string; action: string; detail: string; createdAt: number }): string {
+        const when = this.relativeTime(item.createdAt);
+        const file = this.shortFileName(this.activitySubject(item));
+        switch (item.action) {
+            case 'document_created': return `${when} ${item.actorName} 新建了「${file}」`;
+            case 'document_deleted': return `${when} ${item.actorName} 删除了「${file}」`;
+            case 'comment': return `${when} ${item.actorName} 评论了「${file}」`;
+            case 'permission': {
+                const state = item.detail.includes('只读') ? '只读' : '可编辑';
+                return `${when} ${item.actorName} 把「${file}」改为${state}`;
+            }
+            case 'team_updated': return `${when} ${item.actorName} 更新了团队`;
+            default: return `${when} ${item.actorName} ${item.detail}`;
+        }
+    }
+
+    private rememberMention(data: TeamDriveChangedMessage): void {
+        if (!data.filePath || !data.actorName) return;
+        const item: TeamMention = {
+            id: data.id || `live-${data.createdAt || Date.now()}-${data.fileId || ''}`,
+            actorName: data.actorName,
+            fileId: data.fileId || '',
+            filePath: data.filePath,
+            kind: data.kind || 'body',
+            excerpt: data.excerpt || '',
+            createdAt: data.createdAt || Date.now(),
+        };
+        this.mentions = [item, ...this.mentions.filter(row => row.id !== item.id)].slice(0, 20);
+    }
+
+    private mergeMentions(fresh: TeamMention[]): TeamMention[] {
+        const seen = new Set(fresh.map(item => item.id));
+        const extra = this.mentions.filter(item => !seen.has(item.id));
+        return [...extra, ...fresh].slice(0, 20);
+    }
+
+    private mentionText(item: { actorName?: string; filePath?: string; kind?: string }): string {
+        const who = item.actorName || '有人';
+        const file = this.shortFileName(item.filePath || '');
+        if (item.kind === 'annotation') return `${who} 在「${file}」的标注里提到了你`;
+        if (item.kind === 'comment') return `${who} 在「${file}」的评论里提到了你`;
+        return `${who} 在「${file}」里提到了你`;
+    }
+
+    private renderMentions(container: Element): void {
+        if (this.mentions.length === 0) return;
+        const section = container.createDiv('team-mentions');
+        this.sectionHeading(section, 'at-sign', '提及我');
+        for (const item of this.mentions.slice(0, 5)) {
+            const line = section.createEl('p', { cls: 'activity-item mention-item' });
+            line.textContent = `${this.relativeTime(item.createdAt)} ${this.mentionText(item)}`;
+            line.addEventListener('click', () => {
+                void this.openTeamPath(item.filePath);
+            });
+        }
+    }
+
+    private async openTeamPath(localPath: string): Promise<void> {
+        if (!localPath || !this.currentTeam) return;
+        const teamPrefix = `团队云盘/${this.currentTeam.name}`;
+        let file = this.app.vault.getAbstractFileByPath(localPath);
+        if (!file) {
+            if (!this.app.vault.getAbstractFileByPath('团队云盘')) {
+                await this.app.vault.createFolder('团队云盘');
+            }
+            if (!this.app.vault.getAbstractFileByPath(teamPrefix)) {
+                await this.app.vault.createFolder(teamPrefix);
+            }
+            file = await this.app.vault.create(localPath, '');
+        }
+        await this.app.workspace.openLinkText(localPath, '', false);
+    }
+
+    private renderActivity(container: Element): void {
+        const section = container.createDiv('team-activity');
+        this.sectionHeading(section, 'activity', '团队动态');
+        const rows = this.compactActivity();
+        if (rows.length === 0) {
+            section.createEl('p', { text: '还没有动态', cls: 'empty-message' });
+            return;
+        }
+        for (const item of rows) {
+            section.createEl('p', { text: this.activityLine(item), cls: 'activity-item' });
+        }
     }
 
     private renderMembers(container: Element) {
         if (!this.currentTeam) return;
 
         const membersDiv = container.createDiv('team-members');
-        membersDiv.createEl('h5', { text: '团队成员' });
+        this.sectionHeading(membersDiv, 'users', '团队成员');
 
         const memberList = membersDiv.createEl('ul', { cls: 'member-list' });
 
         for (const member of this.currentTeam.members) {
             const li = memberList.createEl('li', { cls: 'member-item' });
+            li.setAttribute('data-user-id', member.userId);
 
             // Avatar
             const avatar = li.createDiv('member-avatar');
@@ -415,6 +678,9 @@ export class TeamView extends ItemView {
             const info = li.createDiv('member-info');
             info.createEl('span', { text: member.username, cls: 'member-name' });
             info.createEl('span', { text: this.getRoleText(member.role), cls: 'member-role' });
+            if (this.onlineUserIds.has(member.userId)) {
+                info.createEl('span', { text: '在线', cls: 'member-online' });
+            }
 
             // Context menu
             li.addEventListener('contextmenu', (e) => {
@@ -425,12 +691,7 @@ export class TeamView extends ItemView {
 
         // Invite button
         if (this.plugin.teamManager.hasPermission('manage_members')) {
-            const inviteBtn = membersDiv.createEl('button', {
-                text: '邀请成员',
-                cls: 'team-invite-btn'
-            });
-
-            inviteBtn.addEventListener('click', () => {
+            this.iconButton(membersDiv, 'user-plus', '邀请成员', 'team-invite-btn', () => {
                 if (this.currentTeam) {
                     new InviteMemberModal(this.app, this.plugin, this.currentTeam.id).open();
                 }
@@ -442,14 +703,10 @@ export class TeamView extends ItemView {
         if (!this.currentTeam) return;
 
         const driveDiv = container.createDiv('team-drive');
-        driveDiv.createEl('h5', { text: '团队文件库 📁' });
+        this.sectionHeading(driveDiv, 'folder', '团队文件库');
 
-        // Add "New Document" button
-        const newBtn = driveDiv.createEl('button', {
-            text: '+ 新建文档',
-            cls: 'team-new-doc-btn'
-        });
-        newBtn.addEventListener('click', () => {
+        const toolbar = driveDiv.createDiv('team-drive-toolbar');
+        this.iconButton(toolbar, 'plus', '新建文档', 'team-toolbar-btn', () => {
             void (async () => {
                 const filename = `未命名文档-${Date.now()}.md`;
                 const teamPrefix = `团队云盘/${this.currentTeam!.name}`;
@@ -463,14 +720,22 @@ export class TeamView extends ItemView {
                 }
             })();
         });
-
-        // Add "Upload Local File" button
-        const uploadBtn = driveDiv.createEl('button', {
-            text: '📤 上传本地文件',
-            cls: 'team-upload-doc-btn'
-        });
-        uploadBtn.addEventListener('click', () => {
+        this.iconButton(toolbar, 'upload', '上传本地文件', 'team-toolbar-btn', () => {
             this.showLocalFilePicker();
+        });
+
+        const searchRow = driveDiv.createDiv('team-search-row');
+        const searchInput = searchRow.createEl('input', { type: 'text', placeholder: '搜索标题或正文' });
+        searchInput.value = this.searchQuery;
+        searchInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                this.searchQuery = searchInput.value.trim();
+                void this.render();
+            }
+        });
+        this.iconButton(searchRow, 'search', '搜索', 'team-search-btn', () => {
+            this.searchQuery = searchInput.value.trim();
+            void this.render();
         });
 
         try {
@@ -490,17 +755,24 @@ export class TeamView extends ItemView {
                 }
             }
 
-            if (this.teamDocs.length === 0) {
-                driveDiv.createEl('p', { text: '云盘是空的', cls: 'empty-message' });
+            let docsToShow = this.teamDocs;
+            if (this.searchQuery) {
+                const hits = await this.plugin.teamManager.searchDocuments(this.currentTeam.id, this.searchQuery);
+                const ids = new Set(hits.map(hit => hit.id));
+                docsToShow = this.teamDocs.filter(doc => ids.has(doc.id));
+            }
+
+            if (docsToShow.length === 0) {
+                driveDiv.createEl('p', { text: this.searchQuery ? '没有匹配的文档' : '云盘是空的', cls: 'empty-message' });
             } else {
                 const docList = driveDiv.createEl('ul', { cls: 'doc-list' });
 
-                for (const doc of this.teamDocs) {
+                for (const doc of docsToShow) {
                     const li = docList.createEl('li', { cls: 'doc-item' });
 
                     const leftDiv = li.createDiv({ cls: 'doc-item-left' });
                     const icon = leftDiv.createSpan({ cls: 'doc-icon' });
-                    icon.textContent = '📄 ';
+                    setIcon(icon, 'file-text');
                     const filename = doc.path.split('/').pop() || doc.path;
                     leftDiv.createSpan({ text: filename, cls: 'doc-title' });
 
@@ -509,17 +781,49 @@ export class TeamView extends ItemView {
                         rightDiv.createSpan({ text: `最后由 ${doc.lastEditorName} 编辑`, cls: 'doc-editor' });
                     }
 
-                    // History button
-                    const historyBtn = rightDiv.createEl('button', { text: '🕒', cls: 'doc-hist-btn' });
-                    historyBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
+                    if (this.plugin.teamManager.hasPermission('manage_settings')) {
+                        this.iconButton(
+                            rightDiv,
+                            doc.permission === 'read' ? 'lock' : 'lock-open',
+                            doc.permission === 'read' ? '改为可编辑' : '改为只读',
+                            'doc-icon-btn',
+                            (event) => {
+                                event.stopPropagation();
+                                const next = doc.permission === 'read' ? 'write' : 'read';
+                                void this.plugin.teamManager.setDocumentPermission(this.currentTeam!.id, doc.id, next)
+                                    .then(() => this.render())
+                                    .catch((err: unknown) => new Notice(getErrorMessage(err) || '修改权限失败'));
+                            },
+                        );
+                    } else if (doc.permission === 'read') {
+                        const lock = rightDiv.createSpan({ cls: 'doc-perm-label' });
+                        setIcon(lock, 'lock');
+                        lock.setAttribute('aria-label', '只读');
+                    }
+
+                    this.iconButton(rightDiv, 'message-square', '评论', 'doc-comment-btn', () => {
+                        const teamId = this.currentTeam?.id;
+                        if (!teamId) {
+                            new Notice('请先选择团队');
+                            return;
+                        }
+                        // 等这一下点击结束再打开，避免弹窗被同一次点击立刻关掉
+                        window.setTimeout(() => {
+                            try {
+                                new CommentModal(this.app, this.plugin, teamId, doc).open();
+                            } catch (error: unknown) {
+                                new Notice(getErrorMessage(error) || '无法打开评论');
+                            }
+                        }, 0);
+                    });
+
+                    this.iconButton(rightDiv, 'history', '历史版本', 'doc-icon-btn', (event) => {
+                        event.stopPropagation();
                         new HistoryModal(this.app, this.plugin, this.currentTeam!.id, doc.id, doc.path).open();
                     });
 
-                    // Delete button
-                    const delBtn = rightDiv.createEl('button', { text: '🗑️', cls: 'doc-del-btn' });
-                    delBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
+                    this.iconButton(rightDiv, 'trash-2', '删除', 'doc-icon-btn', (event) => {
+                        event.stopPropagation();
                         void (async () => {
                             try {
                                 if (this.plugin.collabEditor.isActive && this.plugin.collabEditor.activeFilePath === doc.path) {
@@ -539,7 +843,9 @@ export class TeamView extends ItemView {
                     });
 
                     // 点击时自动与本地目录挂钩，并抛给 Obsidian 的文件系统去开启
-                    li.addEventListener('click', () => {
+                    li.addEventListener('click', (event) => {
+                        const target = event.target as HTMLElement | null;
+                        if (target?.closest('button, .doc-item-right')) return;
                         void (async () => {
                             const teamPrefix = `团队云盘/${this.currentTeam!.name}`;
                             const localPath = doc.path;
@@ -569,24 +875,42 @@ export class TeamView extends ItemView {
 
     private renderActions(container: Element) {
         const actionsDiv = container.createDiv('team-actions');
-
-        // Sync plugins button
-        const syncBtn = actionsDiv.createEl('button', {
-            text: '同步插件',
-            cls: 'action-btn'
-        });
-        syncBtn.addEventListener('click', () => {
+        this.iconButton(actionsDiv, 'plug', '同步插件', 'action-btn', () => {
             void this.plugin.syncTeamPlugins();
         });
-
-        // Generate report button
-        const reportBtn = actionsDiv.createEl('button', {
-            text: '生成报告',
-            cls: 'action-btn'
-        });
-        reportBtn.addEventListener('click', () => {
+        this.iconButton(actionsDiv, 'clipboard-list', '生成报告', 'action-btn', () => {
             this.plugin.openReportModal();
         });
+
+        const me = this.currentTeam?.members.find(member => member.userId === this.plugin.settings.userId);
+        if (me && me.role !== 'owner' && this.currentTeam) {
+            const team = this.currentTeam;
+            this.iconButton(actionsDiv, 'log-out', '离开团队', 'action-btn', () => {
+                new ConfirmActionModal(this.app, '离开团队', `确定离开「${team.name}」？`, '离开', () => {
+                    void this.plugin.teamManager.leaveTeam(team.id).then(async () => {
+                        this.plugin.settings.currentTeamId = '';
+                        await this.plugin.saveSettings();
+                        this.currentTeam = null;
+                        new Notice('已离开团队');
+                        await this.render();
+                    }).catch((error: unknown) => new Notice(getErrorMessage(error) || '离开失败'));
+                }).open();
+            });
+        }
+        if (this.plugin.teamManager.hasPermission('delete_team') && this.currentTeam) {
+            const team = this.currentTeam;
+            this.iconButton(actionsDiv, 'trash-2', '删除团队', 'action-btn team-danger-btn', () => {
+                new ConfirmActionModal(this.app, '删除团队', `确定删除「${team.name}」？云端文档会一起删除。`, '删除', () => {
+                    void this.plugin.teamManager.deleteTeam(team.id).then(async () => {
+                        this.plugin.settings.currentTeamId = '';
+                        await this.plugin.saveSettings();
+                        this.currentTeam = null;
+                        new Notice('团队已删除');
+                        await this.render();
+                    }).catch((error: unknown) => new Notice(getErrorMessage(error) || '删除失败'));
+                }, true).open();
+            });
+        }
     }
 
     private getRoleText(role: string): string {
@@ -602,8 +926,25 @@ export class TeamView extends ItemView {
     private showMemberMenu(event: MouseEvent, member: TeamMember) {
         const menu = new Menu();
 
+        if (this.currentTeam?.ownerId === this.plugin.settings.userId && member.userId !== this.plugin.settings.userId) {
+            const roles: TeamRole[] = ['admin', 'member', 'viewer'];
+            for (const role of roles) {
+                if (member.role === role) continue;
+                menu.addItem(item => item
+                    .setTitle(`设为${this.getRoleText(role)}`)
+                    .setIcon('user-cog')
+                    .onClick(() => {
+                        void this.plugin.teamManager.updateMemberRole(this.currentTeam!.id, member.userId, role)
+                            .then(() => this.render())
+                            .catch((error: unknown) => new Notice(getErrorMessage(error) || '修改角色失败'));
+                    })
+                );
+            }
+        }
+
         if (this.plugin.teamManager.hasPermission('manage_members') &&
-            member.userId !== this.plugin.settings.userId) {
+            member.userId !== this.plugin.settings.userId &&
+            member.role !== 'owner') {
             menu.addItem(item => item
                 .setTitle('移除成员')
                 .setIcon('user-minus')
@@ -657,7 +998,7 @@ export class TeamView extends ItemView {
                         await this.app.vault.rename(file, cloudPath);
                     }
 
-                    new Notice(`✅ 已将「${file.name}」上传到团队云盘`);
+                    new Notice(`已将「${file.name}」上传到团队云盘`);
                     await this.render();
                 } catch (e: unknown) {
                     new Notice(`上传失败: ${getErrorMessage(e)}`);
@@ -671,6 +1012,42 @@ export class TeamView extends ItemView {
 /**
  * 本地文件模糊搜索弹窗
  */
+class ConfirmActionModal extends Modal {
+    private readonly title: string;
+    private readonly message: string;
+    private readonly confirmText: string;
+    private readonly onConfirm: () => void;
+    private readonly destructive: boolean;
+
+    constructor(app: App, title: string, message: string, confirmText: string, onConfirm: () => void, destructive = false) {
+        super(app);
+        this.title = title;
+        this.message = message;
+        this.confirmText = confirmText;
+        this.onConfirm = onConfirm;
+        this.destructive = destructive;
+    }
+
+    onOpen(): void {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.createEl('h2', { text: this.title });
+        contentEl.createEl('p', { text: this.message });
+        const row = contentEl.createDiv('team-confirm-actions');
+        const confirm = row.createEl('button', { text: this.confirmText, cls: this.destructive ? 'mod-warning' : 'mod-cta' });
+        confirm.addEventListener('click', () => {
+            this.onConfirm();
+            this.close();
+        });
+        const cancel = row.createEl('button', { text: '取消' });
+        cancel.addEventListener('click', () => this.close());
+    }
+
+    onClose(): void {
+        this.contentEl.empty();
+    }
+}
+
 class LocalFileSuggestModal extends FuzzySuggestModal<TFile> {
     private files: TFile[];
     private onChoose: (file: TFile) => void;

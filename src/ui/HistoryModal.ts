@@ -60,7 +60,7 @@ export class HistoryModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
 
-        contentEl.createEl('h2', { text: `📜 文档时光机: ${this.docPath}` });
+        contentEl.createEl('h2', { text: `文档历史：${this.docPath.split('/').pop() || this.docPath}` });
         const loadingEl = contentEl.createEl('div', { text: '正在加载历史版本清单...' });
 
         try {
@@ -84,7 +84,7 @@ export class HistoryModal extends Modal {
 
                 const btnGroup = row.createEl('div');
 
-                const restoreBtn = btnGroup.createEl('button', { text: '🔄 还原到此' });
+                const restoreBtn = btnGroup.createEl('button', { text: '还原到此' });
                 restoreBtn.onclick = () => {
                     new ConfirmRestoreModal(
                         this.app,
@@ -122,7 +122,7 @@ export class HistoryModal extends Modal {
 
             await this.plugin.teamManager.createTeamDocument(this.teamId, this.docPath, restoredText);
 
-            new Notice(`✅ 已成功恢复到版本 v${snapshot.version}`);
+            new Notice(`已恢复到版本 v${snapshot.version}`);
             this.close();
         } catch (e: unknown) {
             new Notice(`还原失败: ${getErrorMessage(e)}`);

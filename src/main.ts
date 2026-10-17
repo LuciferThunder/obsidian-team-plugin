@@ -1,4 +1,4 @@
-import { Plugin, TFile, TAbstractFile, Notice, WorkspaceLeaf } from 'obsidian';
+import { App, Modal, Plugin, TFile, TFolder, TAbstractFile, Notice, WorkspaceLeaf } from 'obsidian';
 import { TeamPluginSettings, DEFAULT_SETTINGS } from './types';
 import { JwtPayload } from './utils/api';
 import { TeamPluginSettingTab } from './settings';
@@ -6,6 +6,7 @@ import { TeamManager, PluginSync, Collaboration, CollabEditor } from './core';
 import { Summarizer } from './ai';
 import { DailyReport, MonthlyReport } from './reports';
 import { ReportModal, TeamView, TEAM_VIEW_TYPE, LoginModal, CreateTeamModal } from './ui';
+import { CommentModal } from './ui/CommentModal';
 
 export default class TeamPlugin extends Plugin {
     settings: TeamPluginSettings;
@@ -23,6 +24,12 @@ export default class TeamPlugin extends Plugin {
 
     /** 由 WebSocket 触发的重命名，避免再次同步到云端造成循环 */
     pendingRemoteRenames = new Set<string>();
+    /** 恢复团队文件夹时，忽略这一轮连带触发的子路径重命名 */
+    private suppressRenamePrefixes = new Set<string>();
+    private renameBatch: Array<{ file: TAbstractFile; oldPath: string }> = [];
+    private renameBatchTimer: number | null = null;
+
+    private collabStatusEl: HTMLElement | null = null;
 
     async onload() {
         console.log('Loading Team Collaboration Plugin');
@@ -66,6 +73,13 @@ export default class TeamPlugin extends Plugin {
         this.collabEditor.onAuthFailed = () => {
             void this.handleAuthExpired();
         };
+
+        this.collabStatusEl = this.addStatusBarItem();
+        this.collabStatusEl.addClass('team-collab-status');
+        this.collabEditor.setStatusCallback((_status, info) => {
+            if (!this.collabStatusEl) return;
+            this.collabStatusEl.setText(info || '');
+        });
     }
 
     onunload() {
@@ -109,7 +123,7 @@ export default class TeamPlugin extends Plugin {
         if (this.collabEditor.isActive) {
             this.collabEditor.stopCollab();
         }
-        new Notice('⚠️ 登录已过期，请重新登录');
+        new Notice('登录已过期，请重新登录');
         // 刷新团队面板
         for (const leaf of this.app.workspace.getLeavesOfType(TEAM_VIEW_TYPE)) {
             if (leaf.view instanceof TeamView) {
@@ -151,76 +165,212 @@ export default class TeamPlugin extends Plugin {
 
     private setupTeamDriveRenameSync() {
         this.registerEvent(
-            this.app.vault.on('rename', async (file: TAbstractFile, oldPath: string) => {
-                if (!(file instanceof TFile) || !file.path.startsWith('团队云盘/') || !this.settings.apiKey) return;
+            this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
+                if (!this.settings.apiKey || !oldPath.startsWith('团队云盘/')) return;
                 if (this.pendingRemoteRenames.has(oldPath)) {
                     this.pendingRemoteRenames.delete(oldPath);
                     return;
                 }
-                const parts = file.path.split('/');
-                if (parts.length < 3) return;
-                const teamName = parts[1];
-                try {
-                    const teams = await this.teamManager.getMyTeams();
-                    const team = teams.find(t => t.name === teamName);
-                    if (!team) return;
-                    const docs = await this.teamManager.getTeamDocuments(team.id);
-                    const doc = docs.find(d => d.path === oldPath);
-                    if (!doc) return;
-                    await this.teamManager.renameTeamDocument(team.id, doc.id, file.path);
-                    new Notice('已同步重命名到云端');
-                } catch (e) {
-                    new Notice(e instanceof Error ? e.message : String(e));
+                for (const prefix of this.suppressRenamePrefixes) {
+                    if (oldPath === prefix || oldPath.startsWith(`${prefix}/`)) return;
                 }
+
+                this.renameBatch.push({ file, oldPath });
+                if (this.renameBatchTimer !== null) window.clearTimeout(this.renameBatchTimer);
+                this.renameBatchTimer = window.setTimeout(() => {
+                    this.renameBatchTimer = null;
+                    const batch = this.renameBatch.splice(0);
+                    void this.flushTeamDriveRenames(batch);
+                }, 60);
             })
         );
     }
 
+    /**
+     * 团队云盘的直接子文件夹就是团队名。改它等于改团队名，必须确认后走服务端改名，
+     * 否则下次同步会按旧团队名再下一份，其他成员也拿不到新路径。
+     * 团队文件夹里面的子文件夹和文档仍按普通重命名同步。
+     */
+    private async flushTeamDriveRenames(batch: Array<{ file: TAbstractFile; oldPath: string }>): Promise<void> {
+        const consumed = new Set<TAbstractFile>();
+        for (const item of batch) {
+            if (!(item.file instanceof TFolder)) continue;
+            const oldParts = item.oldPath.split('/');
+            if (oldParts.length !== 2 || oldParts[0] !== '团队云盘') continue;
+            for (const other of batch) {
+                if (other.oldPath === item.oldPath || other.oldPath.startsWith(`${item.oldPath}/`)) {
+                    consumed.add(other.file);
+                }
+            }
+            await this.handleTeamFolderRename(item.file, item.oldPath);
+        }
+
+        for (const item of batch) {
+            if (consumed.has(item.file) || !(item.file instanceof TFile)) continue;
+            if (!item.file.path.startsWith('团队云盘/')) continue;
+            const parts = item.file.path.split('/');
+            if (parts.length < 3) continue;
+            const oldTeam = item.oldPath.split('/')[1];
+            const newTeam = parts[1];
+            if (oldTeam !== newTeam) continue;
+            try {
+                const teams = await this.teamManager.getMyTeams();
+                const team = teams.find(t => t.name === newTeam);
+                if (!team) continue;
+                const docs = await this.teamManager.getTeamDocuments(team.id);
+                const doc = docs.find(d => d.path === item.oldPath);
+                if (!doc) continue;
+                await this.teamManager.renameTeamDocument(team.id, doc.id, item.file.path);
+                new Notice('已同步重命名到云端');
+            } catch (e) {
+                new Notice(e instanceof Error ? e.message : String(e));
+            }
+        }
+    }
+
+    private async handleTeamFolderRename(folder: TFolder, oldPath: string): Promise<void> {
+        const oldName = oldPath.split('/')[1];
+        const newParts = folder.path.split('/');
+        const inPlace = newParts.length === 2 && newParts[0] === '团队云盘';
+        const newName = inPlace ? newParts[1] : '';
+
+        const restore = async (message?: string) => {
+            if (message) new Notice(message);
+            await this.restoreVaultPath(folder, oldPath);
+        };
+
+        if (!inPlace || !newName.trim() || newName !== newName.trim() || newName === oldName || /[\\/]/.test(newName) || newName.length > 40) {
+            await restore('团队文件夹必须留在团队云盘下，并且和团队名一致，已恢复原名');
+            return;
+        }
+
+        let teams;
+        try {
+            teams = await this.teamManager.getMyTeams();
+        } catch (e) {
+            await restore(e instanceof Error ? e.message : '读取团队失败，已恢复文件夹名');
+            return;
+        }
+
+        const team = teams.find(t => t.name === oldName);
+        if (!team) {
+            await restore('团队云盘下这一层是团队名，不能单独改。请在团队文件夹里面新建子文件夹');
+            return;
+        }
+        if (teams.some(t => t.id !== team.id && t.name === newName)) {
+            await restore(`已有团队叫「${newName}」，已恢复原名`);
+            return;
+        }
+
+        const member = team.members.find(m => m.userId === this.settings.userId);
+        if (!member || (member.role !== 'owner' && member.role !== 'admin')) {
+            await restore('只有所有者或管理员可以修改团队名称，已恢复文件夹名');
+            return;
+        }
+
+        const confirmed = await this.confirmTeamRename(oldName, newName);
+        if (!confirmed) {
+            await restore();
+            return;
+        }
+
+        try {
+            await this.teamManager.updateTeamProfile(team.id, {
+                name: newName,
+                description: team.description || '',
+            });
+            new Notice('团队名称已更新，其他成员的目录会一起改');
+            this.refreshTeamPanels();
+            const active = this.app.workspace.getActiveFile();
+            if (active instanceof TFile && active.path.startsWith(`团队云盘/${newName}/`)) {
+                if (this.collabEditor.isActive) this.collabEditor.stopCollab();
+                await this.mountTeamFile(active);
+            }
+        } catch (e) {
+            await restore(e instanceof Error ? e.message : '修改团队名称失败，已恢复文件夹名');
+        }
+    }
+
+    private confirmTeamRename(oldName: string, newName: string): Promise<boolean> {
+        return new Promise(resolve => {
+            new TeamRenameConfirmModal(this.app, oldName, newName, resolve).open();
+        });
+    }
+
+    private async restoreVaultPath(file: TAbstractFile, oldPath: string): Promise<void> {
+        if (file.path === oldPath) return;
+        const current = file.path;
+        this.pendingRemoteRenames.add(current);
+        this.suppressRenamePrefixes.add(current);
+        try {
+            await this.app.vault.rename(file, oldPath);
+        } catch (e) {
+            this.pendingRemoteRenames.delete(current);
+            new Notice(e instanceof Error ? e.message : '无法恢复原路径');
+        } finally {
+            window.setTimeout(() => this.suppressRenamePrefixes.delete(current), 300);
+        }
+    }
+
+    private refreshTeamPanels(): void {
+        for (const leaf of this.app.workspace.getLeavesOfType(TEAM_VIEW_TYPE)) {
+            if (leaf.view instanceof TeamView) {
+                void leaf.view.render();
+            }
+        }
+    }
+
     private setupTeamDriveAutoMount() {
         this.registerEvent(
-            this.app.workspace.on('file-open', async (file: TFile | null) => {
-                if (!file) {
-                    if (this.collabEditor.isActive) {
-                        this.collabEditor.stopCollab();
-                    }
-                    return;
-                }
-
-                if (file.path.startsWith('团队云盘/')) {
-                    const parts = file.path.split('/');
-                    if (parts.length >= 3) {
-                        const teamName = parts[1];
-                        try {
-                            const teams = await this.teamManager.getMyTeams();
-                            const team = teams.find(t => t.name === teamName);
-                            if (team) {
-                                // 只有通过插件分享过的文档才进入协同；手动创建的文件不在云端，不启动协同
-                                const docs = await this.teamManager.getTeamDocuments(team.id);
-                                const isShared = docs.some(d => d.path === file.path);
-                                console.log('[AutoMount] 文件检查:', file.path, '云端匹配:', isShared, '云端文档数:', docs.length);
-                                if (!isShared) return;
-
-                                if (!this.collabEditor.isActive || this.collabEditor.activeFilePath !== file.path) {
-                                    console.log('[AutoMount] 启动协同:', file.path);
-                                    if (this.collabEditor.isActive) {
-                                        this.collabEditor.stopCollab();
-                                    }
-                                    await this.collabEditor.startCollab(team.id, file);
-                                } else {
-                                    console.log('[AutoMount] 已在协同中，跳过:', file.path);
-                                }
-                            }
-                        } catch (e) {
-                            console.error('Auto-mount failed:', e);
-                        }
-                    }
-                } else {
-                    if (this.collabEditor.isActive) {
-                        this.collabEditor.stopCollab();
-                    }
-                }
+            this.app.workspace.on('file-open', (file: TFile | null) => {
+                void this.mountTeamFile(file);
             })
         );
+    }
+
+    private async mountTeamFile(file: TFile | null): Promise<void> {
+        if (!file) {
+            if (this.collabEditor.isActive) {
+                this.collabEditor.stopCollab();
+            }
+            return;
+        }
+
+        if (file.path.startsWith('团队云盘/')) {
+            const parts = file.path.split('/');
+            if (parts.length >= 3) {
+                const teamName = parts[1];
+                try {
+                    const teams = await this.teamManager.getMyTeams();
+                    const team = teams.find(t => t.name === teamName);
+                    if (team) {
+                        // 只有通过插件分享过的文档才进入协同；手动创建的文件不在云端，不启动协同
+                        const docs = await this.teamManager.getTeamDocuments(team.id);
+                        const doc = docs.find(d => d.path === file.path);
+                        console.log('[AutoMount] 文件检查:', file.path, '云端匹配:', !!doc, '云端文档数:', docs.length);
+                        if (!doc) return;
+
+                        if (!this.collabEditor.isActive || this.collabEditor.activeFilePath !== file.path) {
+                            console.log('[AutoMount] 启动协同:', file.path);
+                            if (this.collabEditor.isActive) {
+                                this.collabEditor.stopCollab();
+                            }
+                            const member = team.members.find(m => m.userId === this.settings.userId);
+                            const canEdit = !!member
+                                && member.role !== 'viewer'
+                                && (doc.permission !== 'read' || member.role === 'owner' || member.role === 'admin');
+                            await this.collabEditor.startCollab(team.id, file, { readOnly: !canEdit, documentId: doc.id });
+                        } else {
+                            console.log('[AutoMount] 已在协同中，跳过:', file.path);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Auto-mount failed:', e);
+                }
+            }
+        } else if (this.collabEditor.isActive) {
+            this.collabEditor.stopCollab();
+        }
     }
 
     private registerCommands() {
@@ -336,6 +486,30 @@ export default class TeamPlugin extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: 'comment-selection',
+            name: '评论当前选区',
+            editorCallback: (editor) => {
+                const file = this.app.workspace.getActiveFile();
+                const team = this.teamManager.getCurrentTeam();
+                if (!file || !team) {
+                    new Notice('请先打开团队文档并选中团队');
+                    return;
+                }
+                const quote = editor.getSelection();
+                void this.teamManager.getTeamDocuments(team.id).then(docs => {
+                    const doc = docs.find(item => item.path === file.path);
+                    if (!doc) {
+                        new Notice('当前文件不是团队文档');
+                        return;
+                    }
+                    new CommentModal(this.app, this, team.id, doc, quote).open();
+                }).catch((error: unknown) => {
+                    new Notice(error instanceof Error ? error.message : '无法打开评论');
+                });
+            }
+        });
+
         // Login / Register
         this.addCommand({
             id: 'login',
@@ -431,14 +605,58 @@ export default class TeamPlugin extends Plugin {
 
             const message = [
                 `同步完成:`,
-                `✅ 已安装: ${result.installed.length}`,
-                `⏭️ 已跳过: ${result.skipped.length}`,
-                `❌ 失败: ${result.failed.length}`,
+                `已安装: ${result.installed.length}`,
+                `已跳过: ${result.skipped.length}`,
+                `失败: ${result.failed.length}`,
             ].join('\n');
 
             new Notice(message);
         } catch (e) {
             new Notice(`同步失败: ${e}`);
         }
+    }
+}
+
+class TeamRenameConfirmModal extends Modal {
+    private settled = false;
+
+    constructor(
+        app: App,
+        private readonly oldName: string,
+        private readonly newName: string,
+        private readonly resolveChoice: (ok: boolean) => void,
+    ) {
+        super(app);
+    }
+
+    onOpen(): void {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.createEl('h2', { text: '修改团队名称' });
+        contentEl.createEl('p', {
+            text: `「${this.oldName}」是团队文件夹，必须和团队名保持一致。子文件夹可以随意新建和改名，这一层不行。`,
+        });
+        contentEl.createEl('p', {
+            text: `是否把团队名称改为「${this.newName}」？确认后云端路径会一起更新，其他成员才能拿到改名后的文档。`,
+        });
+        const row = contentEl.createDiv('team-confirm-actions');
+        const confirm = row.createEl('button', { text: '修改团队名', cls: 'mod-cta' });
+        confirm.addEventListener('click', () => this.finish(true));
+        const cancel = row.createEl('button', { text: '取消' });
+        cancel.addEventListener('click', () => this.finish(false));
+    }
+
+    onClose(): void {
+        this.contentEl.empty();
+        if (this.settled) return;
+        this.settled = true;
+        this.resolveChoice(false);
+    }
+
+    private finish(ok: boolean): void {
+        if (this.settled) return;
+        this.settled = true;
+        this.resolveChoice(ok);
+        this.close();
     }
 }

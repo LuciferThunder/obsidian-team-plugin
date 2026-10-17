@@ -38,6 +38,7 @@ export class LoginModal extends Modal {
     }
 
     async onOpen() {
+        this.modalEl.addClass('team-auth-modal');
         await this.loadCaptcha();
         this.renderLogin();
     }
@@ -70,9 +71,8 @@ export class LoginModal extends Modal {
 
         new Setting(contentEl)
             .setName('账号')
-            .setDesc('用户名或邮箱')
             .addText(text => text
-                .setPlaceholder('用户名 / 邮箱')
+                .setPlaceholder('用户名或邮箱')
                 .setValue(this.account)
                 .onChange(value => { this.account = value; })
             );
@@ -91,6 +91,7 @@ export class LoginModal extends Modal {
 
         // Buttons
         new Setting(contentEl)
+            .setClass('team-auth-actions')
             .addButton(button => button
                 .setButtonText('登录')
                 .setCta()
@@ -122,7 +123,7 @@ export class LoginModal extends Modal {
         contentEl.addClass('team-login-modal');
 
         contentEl.createEl('h2', { text: '重置密码' });
-        contentEl.createEl('p', { text: '输入注册邮箱，我们会发送 6 位验证码。', cls: 'setting-item-description' });
+        contentEl.createEl('p', { text: '输入注册邮箱，我们会发送 6 位验证码。', cls: 'team-auth-hint' });
 
         new Setting(contentEl)
             .setName('邮箱')
@@ -165,6 +166,7 @@ export class LoginModal extends Modal {
             });
 
         new Setting(contentEl)
+            .setClass('team-auth-actions')
             .addButton(button => button
                 .setButtonText('重置密码')
                 .setCta()
@@ -309,6 +311,7 @@ export class LoginModal extends Modal {
 
         // Buttons
         new Setting(contentEl)
+            .setClass('team-auth-actions')
             .addButton(button => button
                 .setButtonText('注册')
                 .setCta()
@@ -341,9 +344,8 @@ export class LoginModal extends Modal {
     }
 
     private renderCaptchaSection(containerEl: HTMLElement, isRegister: boolean) {
-        const captchaDiv = containerEl.createDiv('captcha-section');
-
-        captchaDiv.createSpan({ text: '验证码', cls: 'captcha-label' });
+        const setting = new Setting(containerEl).setName('验证码');
+        const captchaDiv = setting.controlEl.createDiv('captcha-section');
 
         const captchaImg = captchaDiv.createDiv('captcha-image');
         if (this.captchaSvg) {

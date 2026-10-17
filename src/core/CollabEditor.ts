@@ -13,6 +13,8 @@ import { yCollab } from 'y-codemirror.next';
 import { EditorView } from '@codemirror/view';
 import { Compartment } from '@codemirror/state';
 import { getMarkdownEditorView } from '../utils/obsidian';
+import { AnnotationHost, teamAnnotationExtension } from './DocAnnotations';
+import { MentionHost, teamMentionExtension } from './DocMentions';
 
 /** 协同会话信息 */
 interface CollabSession {
@@ -34,6 +36,9 @@ export class CollabEditor {
     private onStatusChange: CollabStatusCallback | null = null;
     public collabCompartment: Compartment;
     public onAuthFailed: (() => void) | null = null;
+    private sessionReadOnly = false;
+    private annotationTeamId = '';
+    private annotationDocId = '';
 
     constructor(app: App, plugin: Plugin, settings: TeamPluginSettings) {
         this.app = app;
@@ -66,11 +71,14 @@ export class CollabEditor {
     /**
      * 开始协同编辑当前打开的文件
      */
-    async startCollab(teamId: string, file: TFile): Promise<void> {
+    async startCollab(teamId: string, file: TFile, options?: { readOnly?: boolean; documentId?: string }): Promise<void> {
         // 如果已有会话，先停止
         if (this.activeSession) {
             this.stopCollab();
         }
+        this.sessionReadOnly = !!options?.readOnly;
+        this.annotationTeamId = teamId;
+        this.annotationDocId = options?.documentId || '';
 
         // 获取 WebSocket 地址
         const wsUrl = this.getWebSocketUrl();
@@ -92,18 +100,22 @@ export class CollabEditor {
             connect: true,
         });
 
-        // 设置用户信息（用于远程光标显示）
+        // 设置用户信息（用于远程光标显示）。颜色按用户名固定，避免每次重连变色。
+        const displayName = this.settings.username || '匿名';
+        const color = this.colorForName(displayName);
         provider.awareness.setLocalStateField('user', {
-            name: this.settings.username || '匿名',
-            color: this.getRandomColor(),
-            colorLight: this.getRandomColorLight(),
+            name: displayName,
+            color,
+            colorLight: this.lighten(color),
         });
+        const onAwareness = () => this.publishPresence(file, provider);
+        provider.awareness.on('change', onAwareness);
 
         // 监听连接状态
         provider.on('status', (event: { status: string }) => {
             console.log('[CollabEditor] Provider 状态变更:', event.status);
             if (event.status === 'connected') {
-                this.onStatusChange?.('connected', `协同编辑中: ${file.basename}`);
+                this.publishPresence(file, provider);
             } else if (event.status === 'disconnected') {
                 this.onStatusChange?.('disconnected', '连接断开，正在重连...');
             }
@@ -157,10 +169,13 @@ export class CollabEditor {
             provider,
             file,
             roomName,
-            cleanup,
+            cleanup: () => {
+                provider.awareness.off('change', onAwareness);
+                cleanup();
+            },
         };
 
-        new Notice(`🔗 开始协同编辑「${file.basename}」`);
+        new Notice(`开始协同编辑「${file.basename}」`);
     }
 
     /**
@@ -182,7 +197,7 @@ export class CollabEditor {
         this.activeSession = null;
         this.onStatusChange?.('disconnected', '已停止协同');
 
-        new Notice(`❌ 已停止协同编辑「${fileName}」`);
+        new Notice(`已停止协同编辑「${fileName}」`);
     }
 
     /**
@@ -197,25 +212,60 @@ export class CollabEditor {
         const doInject = (editorView: EditorView) => {
             if (isCleaned) return;
 
-            // 【强制对齐】挂载 yCollab 前必须确保 EditorState.doc 与 ytext 100% 一致
+            // 切换笔记时编辑器会被复用，旧的协同还挂着。先卸掉，再改正文，否则会去写只读的 doc。
+            try {
+                editorView.dispatch({
+                    effects: this.collabCompartment.reconfigure([]),
+                });
+            } catch (error) {
+                console.error('[CollabEditor] 卸载旧协同失败', error);
+            }
+
             const currentDoc = editorView.state.doc.toString();
             const ytextContent = ytext.toString();
             if (currentDoc !== ytextContent) {
-                editorView.dispatch({
-                    changes: { from: 0, to: currentDoc.length, insert: ytextContent }
-                });
+                try {
+                    editorView.dispatch({
+                        changes: { from: 0, to: editorView.state.doc.length, insert: ytextContent },
+                    });
+                } catch (error) {
+                    console.error('[CollabEditor] 对齐文档失败', error);
+                }
             }
 
             const collabExtension = yCollab(ytext, provider.awareness, { undoManager });
-            editorView.dispatch({
-                effects: this.collabCompartment.reconfigure(collabExtension)
-            });
+            const extensions = [collabExtension];
+            if (this.annotationTeamId && this.annotationDocId) {
+                const host = this.plugin as unknown as AnnotationHost & MentionHost;
+                extensions.push(teamAnnotationExtension({
+                    teamId: this.annotationTeamId,
+                    documentId: this.annotationDocId,
+                    host,
+                }));
+                extensions.push(teamMentionExtension({
+                    teamId: this.annotationTeamId,
+                    documentId: this.annotationDocId,
+                    readOnly: this.sessionReadOnly,
+                    host,
+                }));
+            }
+            if (this.sessionReadOnly) {
+                extensions.push(EditorView.editable.of(false));
+            }
+            try {
+                editorView.dispatch({
+                    effects: this.collabCompartment.reconfigure(extensions),
+                });
+            } catch (error) {
+                console.error('[CollabEditor] 挂载协同失败', error);
+                new Notice('协同编辑启动失败');
+            }
             console.log('[CollabEditor] yCollab 扩展已成功注入');
         };
 
         // 尝试获取 EditorView
         const editorView = this.getEditorView(file);
-        console.log('[CollabEditor] 初次获取 EditorView:', editorView ? '✅ 成功' : '❌ 失败, 将重试');
+        console.log('[CollabEditor] 初次获取 EditorView:', editorView ? '成功' : '失败, 将重试');
         if (editorView) {
             doInject(editorView);
         } else {
@@ -227,7 +277,7 @@ export class CollabEditor {
                 if (isCleaned) return;
                 retries++;
                 const ev = this.getEditorView(file);
-                console.log(`[CollabEditor] 重试 #${retries} 获取 EditorView:`, ev ? '✅ 成功' : '❌ 失败');
+                console.log(`[CollabEditor] 重试 #${retries} 获取 EditorView:`, ev ? '成功' : '失败');
                 if (ev) {
                     doInject(ev);
                 } else if (retries < maxRetries) {
@@ -280,14 +330,35 @@ export class CollabEditor {
         return wsUrl;
     }
 
-    /** 随机颜色（用于远程光标） */
-    private getRandomColor(): string {
-        const colors = ['#30bced', '#6eeb83', '#ffbc42', '#e84855', '#8ac926', '#ff6b6b', '#4ecdc4', '#a06cd5'];
-        return colors[Math.floor(Math.random() * colors.length)];
+    /** 当前文档里除自己以外的在线协作者 */
+    private listPeerNames(provider: WebsocketProvider): string[] {
+        const names: string[] = [];
+        provider.awareness.getStates().forEach((state, clientId) => {
+            if (clientId === provider.awareness.clientID) return;
+            const user = (state as { user?: { name?: string } }).user;
+            if (user?.name) names.push(user.name);
+        });
+        return names;
     }
 
-    private getRandomColorLight(): string {
-        const colors = ['#30bced33', '#6eeb8333', '#ffbc4233', '#e8485533', '#8ac92633', '#ff6b6b33', '#4ecdc433', '#a06cd533'];
-        return colors[Math.floor(Math.random() * colors.length)];
+    private publishPresence(file: TFile, provider: WebsocketProvider): void {
+        const peers = this.listPeerNames(provider);
+        const who = peers.length > 0 ? ` · 同时在线: ${peers.join('、')}` : '';
+        const mode = this.sessionReadOnly ? '只读查看' : '协同编辑中';
+        this.onStatusChange?.('connected', `${mode}: ${file.basename}${who}`);
+    }
+
+    /** 同一用户名始终得到同一种光标颜色 */
+    private colorForName(name: string): string {
+        const colors = ['#30bced', '#6eeb83', '#ffbc42', '#e84855', '#8ac926', '#ff6b6b', '#4ecdc4', '#a06cd5'];
+        let hash = 0;
+        for (const ch of name) {
+            hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+        }
+        return colors[hash % colors.length];
+    }
+
+    private lighten(hex: string): string {
+        return `${hex}33`;
     }
 }
