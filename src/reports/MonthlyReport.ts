@@ -1,7 +1,8 @@
-import { App, TFile, moment } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { Report, ReportDocument, ReportStats, DEFAULT_MONTHLY_TEMPLATE } from '../types/report';
 import { TeamPluginSettings } from '../types';
 import { Summarizer, ProgressCallback } from '../ai/Summarizer';
+import { endOfLocalMonth, formatChineseMonth, formatDateTime, formatYearMonth, formatYearMonthDay, startOfLocalMonth } from '../utils/dates';
 
 export class MonthlyReport {
     private app: App;
@@ -22,9 +23,8 @@ export class MonthlyReport {
      * Generate monthly report for current month
      */
     async generateCurrentMonthReport(onProgress?: ProgressCallback): Promise<Report> {
-        const startOfMonth = moment().startOf('month');
-        const endOfMonth = moment().endOf('month');
-        return await this.generateReport(startOfMonth.valueOf(), endOfMonth.valueOf(), onProgress);
+        const now = new Date();
+        return await this.generateReport(startOfLocalMonth(now), endOfLocalMonth(now), onProgress);
     }
 
     /**
@@ -78,7 +78,7 @@ export class MonthlyReport {
         const report: Report = {
             id: `monthly-${startTime}`,
             type: 'monthly',
-            title: `月报 - ${moment(startTime).format('YYYY年MM月')}`,
+            title: `月报 - ${formatChineseMonth(startTime)}`,
             content: '',
             summary,
             dateRange: { start: startTime, end: endTime },
@@ -196,7 +196,7 @@ export class MonthlyReport {
         const template = this.settings.monthlyReportTemplate || DEFAULT_MONTHLY_TEMPLATE;
 
         let content = template
-            .replace('{{month}}', moment(report.dateRange.start).format('YYYY年MM月'))
+            .replace('{{month}}', formatChineseMonth(report.dateRange.start))
             .replace('{{summary}}', report.summary || '')
             .replace('{{stats.totalDocuments}}', String(report.stats.totalDocuments))
             .replace('{{stats.newDocuments}}', String(report.stats.newDocuments))
@@ -209,7 +209,7 @@ export class MonthlyReport {
 
         // Handle documents loop
         const docSection = report.documents.slice(0, 20).map(doc => {
-            return `### ${doc.title}\r\n- 创建时间: ${moment(doc.createdAt).format('YYYY-MM-DD')}\r\n- 最后修改: ${moment(doc.modifiedAt).format('YYYY-MM-DD HH:mm')}\r\n- 字数: ${doc.wordCount}`;
+            return `### ${doc.title}\r\n- 创建时间: ${formatYearMonthDay(doc.createdAt ?? doc.modifiedAt)}\r\n- 最后修改: ${formatDateTime(doc.modifiedAt)}\r\n- 字数: ${doc.wordCount}`;
         }).join('\n\n');
 
         content = content.replace(/{{#each documents}}[\s\S]*?{{\/each}}/g, docSection);
@@ -221,7 +221,7 @@ export class MonthlyReport {
      * Save report to vault
      */
     async saveReport(report: Report, folderPath: string = 'reports/monthly'): Promise<TFile> {
-        const fileName = `${moment(report.dateRange.start).format('YYYY-MM')}.md`;
+        const fileName = `${formatYearMonth(report.dateRange.start)}.md`;
         const filePath = `${folderPath}/${fileName}`;
 
         // Ensure folder exists

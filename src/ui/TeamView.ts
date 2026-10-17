@@ -1,4 +1,5 @@
 import { App, ItemView, WorkspaceLeaf, Menu, Modal, Notice, requestUrl, setIcon, TFile, TFolder, FuzzySuggestModal } from 'obsidian';
+import { formatHourMinute } from '../utils/dates';
 import type TeamPlugin from '../main';
 import { Team, TeamMember, TeamRole } from '../types/team';
 import type { TeamMention } from '../core/TeamManager';
@@ -65,9 +66,7 @@ export class TeamView extends ItemView {
 
     private reconnectTimer: number | null = null;
 
-    private logTeamWs(action: string, detail?: Record<string, unknown>): void {
-        const entry = { time: new Date().toISOString(), interface: 'ws/team', action, ...detail };
-        console.log(`[TeamCollab] ${JSON.stringify(entry)}`);
+    private logTeamWs(_action: string, _detail?: Record<string, unknown>): void {
     }
 
     /** 连接团队事件 WebSocket，收到 team_drive_changed 时自动刷新 */
@@ -144,7 +143,7 @@ export class TeamView extends ItemView {
                                 const parent = this.app.vault.getAbstractFileByPath(parentPath);
                                 if (parent instanceof TFolder && parent.children.length === 0) {
                                     try {
-                                        await this.app.vault.delete(parent, true);
+                                        await this.app.fileManager.trashFile(parent);
                                     } catch {
                                         // 空目录删不掉时忽略
                                     }
@@ -352,7 +351,7 @@ export class TeamView extends ItemView {
                     const item = inviteDiv.createDiv('invitation-item');
                     const teamLabel = inv.teamName || inv.teamId.substring(0, 8);
                     const inviterLabel = inv.inviterName || '未知';
-                    item.createEl('span', { text: `${inviterLabel} 邀请你加入「${teamLabel}」(${inv.role === 'member' ? '成员' : inv.role === 'admin' ? '管理员' : inv.role})` });
+                    item.createSpan({ text: `${inviterLabel} 邀请你加入「${teamLabel}」(${inv.role === 'member' ? '成员' : inv.role === 'admin' ? '管理员' : inv.role})` });
 
                     const actions = item.createDiv('invitation-actions');
                     const acceptBtn = actions.createEl('button', { text: '接受', cls: 'action-btn accept-btn' });
@@ -523,8 +522,10 @@ export class TeamView extends ItemView {
             const online = !!userId && this.onlineUserIds.has(userId);
             const badge = item.querySelector('.member-online');
             if (online && !badge) {
-                const info = item.querySelector('.member-info') as HTMLElement | null;
-                info?.createSpan({ text: '在线', cls: 'member-online' });
+                const info = item.querySelector('.member-info');
+                if (info instanceof HTMLElement) {
+                    info.createSpan({ text: '在线', cls: 'member-online' });
+                }
             } else if (!online && badge) {
                 badge.remove();
             }
@@ -565,7 +566,7 @@ export class TeamView extends ItemView {
         if (delta < 60_000) return '刚刚';
         if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`;
         const date = new Date(ts);
-        const hm = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        const hm = formatHourMinute(ts);
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         if (ts >= start.getTime()) return hm;
@@ -676,10 +677,10 @@ export class TeamView extends ItemView {
 
             // Info
             const info = li.createDiv('member-info');
-            info.createEl('span', { text: member.username, cls: 'member-name' });
-            info.createEl('span', { text: this.getRoleText(member.role), cls: 'member-role' });
+            info.createSpan({ text: member.username, cls: 'member-name' });
+            info.createSpan({ text: this.getRoleText(member.role), cls: 'member-role' });
             if (this.onlineUserIds.has(member.userId)) {
-                info.createEl('span', { text: '在线', cls: 'member-online' });
+                info.createSpan({ text: '在线', cls: 'member-online' });
             }
 
             // Context menu

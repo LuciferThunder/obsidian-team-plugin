@@ -32,8 +32,6 @@ export default class TeamPlugin extends Plugin {
     private collabStatusEl: HTMLElement | null = null;
 
     async onload() {
-        console.log('Loading Team Collaboration Plugin');
-
         // Load settings
         await this.loadSettings();
 
@@ -80,10 +78,6 @@ export default class TeamPlugin extends Plugin {
             if (!this.collabStatusEl) return;
             this.collabStatusEl.setText(info || '');
         });
-    }
-
-    onunload() {
-        console.log('Unloading Team Collaboration Plugin');
     }
 
     async loadSettings() {
@@ -347,11 +341,9 @@ export default class TeamPlugin extends Plugin {
                         // 只有通过插件分享过的文档才进入协同；手动创建的文件不在云端，不启动协同
                         const docs = await this.teamManager.getTeamDocuments(team.id);
                         const doc = docs.find(d => d.path === file.path);
-                        console.log('[AutoMount] 文件检查:', file.path, '云端匹配:', !!doc, '云端文档数:', docs.length);
                         if (!doc) return;
 
                         if (!this.collabEditor.isActive || this.collabEditor.activeFilePath !== file.path) {
-                            console.log('[AutoMount] 启动协同:', file.path);
                             if (this.collabEditor.isActive) {
                                 this.collabEditor.stopCollab();
                             }
@@ -360,8 +352,6 @@ export default class TeamPlugin extends Plugin {
                                 && member.role !== 'viewer'
                                 && (doc.permission !== 'read' || member.role === 'owner' || member.role === 'admin');
                             await this.collabEditor.startCollab(team.id, file, { readOnly: !canEdit, documentId: doc.id });
-                        } else {
-                            console.log('[AutoMount] 已在协同中，跳过:', file.path);
                         }
                     }
                 } catch (e) {

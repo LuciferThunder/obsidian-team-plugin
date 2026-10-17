@@ -1,4 +1,5 @@
-import { App, Modal, Setting, Notice, TFile, moment } from 'obsidian';
+import { App, Modal, Setting, Notice, TFile } from 'obsidian';
+import { formatYearMonth, formatYearMonthDay } from '../utils/dates';
 import { TeamPluginSettings, ReportType } from '../types';
 import { DailyReport } from '../reports/DailyReport';
 import { MonthlyReport } from '../reports/MonthlyReport';
@@ -149,9 +150,10 @@ export class ReportModal extends Modal {
                 ? 'reports/daily'
                 : 'reports/monthly';
 
+            const now = Date.now();
             const fileName = this.reportType === 'daily'
-                ? `${moment().format('YYYY-MM-DD')}.md`
-                : `${moment().format('YYYY-MM')}.md`;
+                ? `${formatYearMonthDay(now)}.md`
+                : `${formatYearMonth(now)}.md`;
 
             const filePath = `${folderPath}/${fileName}`;
 

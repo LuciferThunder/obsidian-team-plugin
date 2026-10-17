@@ -90,8 +90,6 @@ export class CollabEditor {
         const ydoc = new Y.Doc();
         const ytext = ydoc.getText('codemirror');
 
-        // 创建 WebSocket 连接
-        console.log('[CollabEditor] WebSocket URL:', wsUrl, 'Room:', roomName);
         const provider = new WebsocketProvider(wsUrl, roomName, ydoc, {
             params: {
                 token: this.settings.apiKey,
@@ -113,7 +111,6 @@ export class CollabEditor {
 
         // 监听连接状态
         provider.on('status', (event: { status: string }) => {
-            console.log('[CollabEditor] Provider 状态变更:', event.status);
             if (event.status === 'connected') {
                 this.publishPresence(file, provider);
             } else if (event.status === 'disconnected') {
@@ -133,16 +130,14 @@ export class CollabEditor {
         });
 
         // 等待首次同步完成
-        const syncResult = await new Promise<string>((resolve) => {
+        await new Promise<void>((resolve) => {
             if (provider.synced) {
-                resolve('already_synced');
+                resolve();
             } else {
-                provider.once('sync', () => resolve('sync_event'));
+                provider.once('sync', () => resolve());
             }
-            // 5秒超时
-            window.setTimeout(() => resolve('timeout'), 5000);
+            window.setTimeout(() => resolve(), 5000);
         });
-        console.log('[CollabEditor] 同步结果:', syncResult, ', ytext.length=', ytext.length, ', provider.wsconnected=', provider.wsconnected);
 
         // 如果这是新文档（服务器上还没有内容），用本地内容初始化
         // 优先使用 EditorView 当前内容（含未保存编辑），否则用 vault 文件内容
@@ -158,8 +153,6 @@ export class CollabEditor {
 
         // 等待编辑器完全渲染就绪（Obsidian 的 file-open 事件触发时 MarkdownView 可能还没初始化完成）
         await new Promise<void>(resolve => window.setTimeout(resolve, 600));
-
-        console.log('[CollabEditor] 开始绑定编辑器, ytext.length=', ytext.length, ', provider.synced=', provider.synced);
 
         // 绑定到 CodeMirror 6 编辑器
         const cleanup = this.bindToEditor(file, ydoc, provider);
@@ -260,12 +253,9 @@ export class CollabEditor {
                 console.error('[CollabEditor] 挂载协同失败', error);
                 new Notice('协同编辑启动失败');
             }
-            console.log('[CollabEditor] yCollab 扩展已成功注入');
         };
 
-        // 尝试获取 EditorView
         const editorView = this.getEditorView(file);
-        console.log('[CollabEditor] 初次获取 EditorView:', editorView ? '成功' : '失败, 将重试');
         if (editorView) {
             doInject(editorView);
         } else {
@@ -277,7 +267,6 @@ export class CollabEditor {
                 if (isCleaned) return;
                 retries++;
                 const ev = this.getEditorView(file);
-                console.log(`[CollabEditor] 重试 #${retries} 获取 EditorView:`, ev ? '成功' : '失败');
                 if (ev) {
                     doInject(ev);
                 } else if (retries < maxRetries) {

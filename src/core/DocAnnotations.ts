@@ -57,10 +57,8 @@ class AnnotationLayer {
 
     constructor(private readonly view: EditorView) {
         const doc = view.dom.ownerDocument;
-        this.button = doc.createElement('button');
+        this.button = createEl('button', { cls: 'team-annotate-btn', text: '标注' });
         this.button.type = 'button';
-        this.button.className = 'team-annotate-btn';
-        this.button.textContent = '标注';
         this.button.hidden = true;
         this.button.addEventListener('mousedown', event => {
             event.preventDefault();
@@ -210,37 +208,23 @@ class AnnotationLayer {
     private openPopover(quote: string, anchor: { left: number; top: number } | null): void {
         this.closePopover();
         const doc = this.view.dom.ownerDocument;
-        const popover = doc.createElement('div');
-        popover.className = 'team-annotation-popover';
-        const quoteEl = doc.createElement('blockquote');
-        quoteEl.textContent = quote;
-        popover.appendChild(quoteEl);
+        const popover = createDiv({ cls: 'team-annotation-popover' });
+        popover.appendChild(createEl('blockquote', { text: quote }));
 
-        const list = doc.createElement('div');
-        list.className = 'comment-list';
+        const list = popover.createDiv({ cls: 'comment-list' });
         this.renderThread(list, quote);
-        popover.appendChild(list);
 
-        const mentionRow = doc.createElement('div');
-        mentionRow.className = 'comment-mentions';
-        popover.appendChild(mentionRow);
+        const mentionRow = popover.createDiv({ cls: 'comment-mentions' });
 
-        const input = doc.createElement('textarea');
-        input.className = 'team-annotation-input';
+        const input = popover.createEl('textarea', { cls: 'team-annotation-input' });
         input.placeholder = '写下标注，点成员或输入 @名字，对方会收到通知';
-        popover.appendChild(input);
 
-        const actions = doc.createElement('div');
-        actions.className = 'team-annotation-actions';
-        const submit = doc.createElement('button');
+        const actions = popover.createDiv({ cls: 'team-annotation-actions' });
+        const submit = actions.createEl('button', { cls: 'mod-cta', text: '发表' });
         submit.type = 'button';
-        submit.className = 'mod-cta';
-        submit.textContent = '发表';
         submit.addEventListener('click', () => {
             void this.publish(quote, input, submit, list);
         });
-        actions.appendChild(submit);
-        popover.appendChild(actions);
 
         const left = Math.max(8, Math.min(anchor?.left ?? 24, window.innerWidth - 340));
         const top = Math.max(8, Math.min(anchor?.top ?? 24, window.innerHeight - 280));
@@ -257,32 +241,22 @@ class AnnotationLayer {
         list.replaceChildren();
         const related = this.comments.filter(comment => comment.quote.trim() === quote);
         if (related.length === 0) {
-            const empty = list.ownerDocument.createElement('p');
-            empty.className = 'comment-hint';
-            empty.textContent = '这段还没有标注';
-            list.appendChild(empty);
+            list.createEl('p', { cls: 'comment-hint', text: '这段还没有标注' });
             return;
         }
         for (const comment of related) {
-            const item = list.ownerDocument.createElement('div');
-            item.className = 'comment-item';
-            const meta = list.ownerDocument.createElement('div');
-            meta.className = 'comment-meta';
-            meta.textContent = `${comment.authorName} · ${new Date(comment.createdAt).toLocaleString()}`;
-            item.appendChild(meta);
-            const body = list.ownerDocument.createElement('p');
-            body.textContent = comment.body;
-            item.appendChild(body);
+            const item = list.createDiv({ cls: 'comment-item' });
+            item.createDiv({
+                cls: 'comment-meta',
+                text: `${comment.authorName} · ${new Date(comment.createdAt).toLocaleString()}`,
+            });
+            item.createEl('p', { text: comment.body });
             const names = this.members
                 .filter(member => (comment.mentions || []).includes(member.userId))
                 .map(member => member.username);
             if (names.length > 0) {
-                const mentioned = list.ownerDocument.createElement('div');
-                mentioned.className = 'comment-mentioned';
-                mentioned.textContent = `提及了 ${names.join('、')}`;
-                item.appendChild(mentioned);
+                item.createDiv({ cls: 'comment-mentioned', text: `提及了 ${names.join('、')}` });
             }
-            list.appendChild(item);
         }
     }
 
@@ -295,18 +269,13 @@ class AnnotationLayer {
                 this.members = team.members;
             }
         } catch (error: unknown) {
-            const hint = row.ownerDocument.createElement('span');
-            hint.className = 'comment-hint';
-            hint.textContent = getErrorMessage(error) || '成员加载失败';
-            row.appendChild(hint);
+            row.appendChild(createSpan({ cls: 'comment-hint', text: getErrorMessage(error) || '成员加载失败' }));
             return;
         }
         const others = this.members.filter(member => member.userId !== options.host.settings.userId);
         for (const member of others) {
-            const chip = row.ownerDocument.createElement('button');
+            const chip = createEl('button', { cls: 'comment-mention-btn', text: `@${member.username}` });
             chip.type = 'button';
-            chip.className = 'comment-mention-btn';
-            chip.textContent = `@${member.username}`;
             chip.addEventListener('click', () => {
                 const token = `@${member.username} `;
                 const start = input.selectionStart ?? input.value.length;

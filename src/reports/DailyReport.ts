@@ -1,7 +1,8 @@
-import { App, TFile, moment } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { Report, ReportDocument, ReportStats, DEFAULT_DAILY_TEMPLATE } from '../types/report';
 import { TeamPluginSettings } from '../types';
 import { Summarizer, ProgressCallback } from '../ai/Summarizer';
+import { endOfLocalDay, formatHourMinute, formatYearMonthDay, startOfLocalDay } from '../utils/dates';
 
 export class DailyReport {
     private app: App;
@@ -22,8 +23,8 @@ export class DailyReport {
      * Generate daily report for today
      */
     async generateTodayReport(onProgress?: ProgressCallback): Promise<Report> {
-        const today = moment().startOf('day');
-        return await this.generateReport(today.valueOf(), today.endOf('day').valueOf(), onProgress);
+        const now = new Date();
+        return await this.generateReport(startOfLocalDay(now), endOfLocalDay(now), onProgress);
     }
 
     /**
@@ -70,7 +71,7 @@ export class DailyReport {
         const report: Report = {
             id: `daily-${startTime}`,
             type: 'daily',
-            title: `日报 - ${moment(startTime).format('YYYY-MM-DD')}`,
+            title: `日报 - ${formatYearMonthDay(startTime)}`,
             content: '',
             summary,
             dateRange: { start: startTime, end: endTime },
@@ -156,7 +157,7 @@ export class DailyReport {
         const template = this.settings.dailyReportTemplate || DEFAULT_DAILY_TEMPLATE;
 
         let content = template
-            .replace('{{date}}', moment(report.dateRange.start).format('YYYY-MM-DD'))
+            .replace('{{date}}', formatYearMonthDay(report.dateRange.start))
             .replace('{{summary}}', report.summary || '')
             .replace('{{stats.totalDocuments}}', String(report.stats.totalDocuments))
             .replace('{{stats.newDocuments}}', String(report.stats.newDocuments))
@@ -165,7 +166,7 @@ export class DailyReport {
 
         // Handle documents loop
         const docSection = report.documents.map(doc => {
-            return `### ${doc.title}\r\n- 路径: ${doc.path}\r\n- 修改时间: ${moment(doc.modifiedAt).format('HH:mm')}\r\n- 字数: ${doc.wordCount}`;
+            return `### ${doc.title}\r\n- 路径: ${doc.path}\r\n- 修改时间: ${formatHourMinute(doc.modifiedAt)}\r\n- 字数: ${doc.wordCount}`;
         }).join('\n\n');
 
         content = content.replace(/{{#each documents}}[\s\S]*?{{\/each}}/g, docSection);
@@ -177,7 +178,7 @@ export class DailyReport {
      * Save report to vault
      */
     async saveReport(report: Report, folderPath: string = 'reports/daily'): Promise<TFile> {
-        const fileName = `${moment(report.dateRange.start).format('YYYY-MM-DD')}.md`;
+        const fileName = `${formatYearMonthDay(report.dateRange.start)}.md`;
         const filePath = `${folderPath}/${fileName}`;
 
         // Ensure folder exists

@@ -50,7 +50,15 @@ export class PluginSync {
 
     private getPluginsRegistry(): Record<string, InstalledPluginEntry> {
         const host = (this.app as App & { plugins?: PluginsRegistry }).plugins;
-        return host?.plugins ?? {};
+        const source = host?.plugins;
+        const registry: Record<string, InstalledPluginEntry> = {};
+        if (!source) return registry;
+        for (const key in source) {
+            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+            const entry = source[key];
+            if (entry) registry[key] = entry;
+        }
+        return registry;
     }
 
     private getPluginDataPath(pluginId: string): string {
@@ -65,27 +73,28 @@ export class PluginSync {
         const enabledPlugins = getEnabledPluginIds(this.app);
         const adapter = this.app.vault.adapter;
 
-        for (const entry of Object.values(this.getPluginsRegistry())) {
-            const manifest = entry.manifest;
-            if (!manifest?.id) {
-                continue;
-            }
+        const registry = this.getPluginsRegistry();
+        for (const key in registry) {
+            if (!Object.prototype.hasOwnProperty.call(registry, key)) continue;
+            const manifest = registry[key]?.manifest;
+            const id = manifest?.id;
+            if (!id) continue;
 
             try {
-                const hasSettings = await adapter.exists(this.getPluginDataPath(manifest.id));
+                const hasSettings = await adapter.exists(this.getPluginDataPath(id));
 
-                if (manifest.id !== 'team-collaboration' &&
-                    !this.settings.excludedPlugins.includes(manifest.id)) {
+                if (id !== 'team-collaboration' &&
+                    !this.settings.excludedPlugins.includes(id)) {
                     plugins.push({
-                        id: manifest.id,
+                        id,
                         name: manifest.name,
                         version: manifest.version,
-                        enabled: enabledPlugins.has(manifest.id),
+                        enabled: enabledPlugins.has(id),
                         hasSettings,
                     });
                 }
             } catch (e) {
-                console.error(`Error reading manifest for ${manifest.id}:`, e);
+                console.error(`Error reading manifest for ${id}:`, e);
             }
         }
 

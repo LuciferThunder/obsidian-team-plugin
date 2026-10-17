@@ -61,28 +61,28 @@ export class HistoryModal extends Modal {
         contentEl.empty();
 
         contentEl.createEl('h2', { text: `文档历史：${this.docPath.split('/').pop() || this.docPath}` });
-        const loadingEl = contentEl.createEl('div', { text: '正在加载历史版本清单...' });
+        const loadingEl = contentEl.createDiv({ text: '正在加载历史版本清单...' });
 
         try {
             this.histories = await this.plugin.teamManager.getTeamDocumentHistories(this.teamId, this.docId);
             loadingEl.remove();
 
             if (this.histories.length === 0) {
-                contentEl.createEl('div', { text: '暂无记录。历史快照将在大家持续协同编辑时由服务器自动定期生成。' });
+                contentEl.createDiv({ text: '暂无记录。历史快照将在大家持续协同编辑时由服务器自动定期生成。' });
                 return;
             }
 
-            const listEl = contentEl.createEl('div', { cls: 'history-list' });
+            const listEl = contentEl.createDiv({ cls: 'history-list' });
 
             this.histories.forEach(h => {
-                const row = listEl.createEl('div', { cls: 'history-item' });
+                const row = listEl.createDiv({ cls: 'history-item' });
 
-                const info = row.createEl('div');
-                info.createEl('div', { text: `版本 ${h.version} — 由 ${h.savedByName} 保存` });
+                const info = row.createDiv();
+                info.createDiv({ text: `版本 ${h.version} — 由 ${h.savedByName} 保存` });
                 const dateText = new Date(h.createdAt).toLocaleString();
                 info.createEl('small', { text: dateText, cls: 'text-muted' });
 
-                const btnGroup = row.createEl('div');
+                const btnGroup = row.createDiv();
 
                 const restoreBtn = btnGroup.createEl('button', { text: '还原到此' });
                 restoreBtn.onclick = () => {

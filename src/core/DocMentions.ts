@@ -49,8 +49,7 @@ class MentionLayer {
 
     constructor(private readonly view: EditorView) {
         const doc = view.dom.ownerDocument;
-        this.popup = doc.createElement('div');
-        this.popup.className = 'team-mention-popup';
+        this.popup = createDiv({ cls: 'team-mention-popup' });
         this.popup.hidden = true;
         doc.body.appendChild(this.popup);
         this.onDocPointerDown = (event: Event) => {
@@ -114,18 +113,17 @@ class MentionLayer {
             this.members = team.members;
         } catch (error: unknown) {
             console.error('[Mention] 成员加载失败', error);
-        } finally {
-            this.membersLoaded = true;
-            if (!this.view.dom.isConnected) return;
-            window.setTimeout(() => {
-                if (!this.view.dom.isConnected) return;
-                try {
-                    this.view.dispatch({ effects: mentionMembersReady.of(null) });
-                } catch (error) {
-                    console.error('[Mention] 刷新提及高亮失败', error);
-                }
-            }, 0);
         }
+        this.membersLoaded = true;
+        if (!this.view.dom.isConnected) return;
+        window.setTimeout(() => {
+            if (!this.view.dom.isConnected) return;
+            try {
+                this.view.dispatch({ effects: mentionMembersReady.of(null) });
+            } catch (error) {
+                console.error('[Mention] 刷新提及高亮失败', error);
+            }
+        }, 0);
     }
 
     private others(): MentionMember[] {
@@ -178,29 +176,26 @@ class MentionLayer {
     }
 
     private renderItems(query: string): void {
-        const doc = this.popup.ownerDocument;
         const items = this.visibleMembers();
         if (this.activeIndex >= items.length) this.activeIndex = 0;
         this.popup.replaceChildren();
         if (!this.membersLoaded) {
-            const hint = doc.createElement('div');
-            hint.className = 'team-mention-empty';
-            hint.textContent = '正在加载成员';
-            this.popup.appendChild(hint);
+            this.popup.createDiv({ cls: 'team-mention-empty', text: '正在加载成员' });
             return;
         }
         if (items.length === 0) {
-            const hint = doc.createElement('div');
-            hint.className = 'team-mention-empty';
-            hint.textContent = query ? '没有匹配的成员' : '团队里还没有其他成员';
-            this.popup.appendChild(hint);
+            this.popup.createDiv({
+                cls: 'team-mention-empty',
+                text: query ? '没有匹配的成员' : '团队里还没有其他成员',
+            });
             return;
         }
         items.forEach((member, index) => {
-            const button = doc.createElement('button');
+            const button = createEl('button', {
+                cls: index === this.activeIndex ? 'team-mention-item is-active' : 'team-mention-item',
+                text: `@${member.username}`,
+            });
             button.type = 'button';
-            button.className = index === this.activeIndex ? 'team-mention-item is-active' : 'team-mention-item';
-            button.textContent = `@${member.username}`;
             button.addEventListener('mousedown', event => {
                 event.preventDefault();
                 event.stopPropagation();

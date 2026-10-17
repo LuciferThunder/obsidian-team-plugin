@@ -787,8 +787,8 @@ body.theme-dark .team-view {
     cursor: pointer;
 }
 
-.cm-ySelectionInfo {
-    opacity: 1 !important;
+.markdown-source-view.mod-cm6 .cm-ySelectionCaret > .cm-ySelectionInfo {
+    opacity: 1;
     font-family: var(--font-interface);
     border-radius: 3px;
 }

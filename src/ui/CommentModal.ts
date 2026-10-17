@@ -46,7 +46,7 @@ export class CommentModal extends Modal {
         }
 
         const mentionRow = contentEl.createDiv('comment-mentions');
-        mentionRow.createEl('span', { text: '提及', cls: 'comment-hint' });
+        mentionRow.createSpan({ text: '提及', cls: 'comment-hint' });
 
         contentEl.createEl('p', { text: '点成员名字插入 @，对方会收到通知。', cls: 'comment-hint' });
 
@@ -79,7 +79,7 @@ export class CommentModal extends Modal {
             const team = await this.plugin.teamManager.getTeam(this.teamId);
             this.members = team.members;
         } catch (error: unknown) {
-            mentionRow.createEl('span', { text: getErrorMessage(error) || '成员加载失败', cls: 'comment-hint' });
+            mentionRow.createSpan({ text: getErrorMessage(error) || '成员加载失败', cls: 'comment-hint' });
         }
         this.renderMentionChips(mentionRow);
         await this.reloadComments();
@@ -88,7 +88,7 @@ export class CommentModal extends Modal {
     private renderMentionChips(mentionRow: HTMLElement): void {
         const others = this.members.filter(member => member.userId !== this.plugin.settings.userId);
         if (others.length === 0) {
-            mentionRow.createEl('span', { text: '团队里还没有其他成员', cls: 'comment-hint' });
+            mentionRow.createSpan({ text: '团队里还没有其他成员', cls: 'comment-hint' });
             return;
         }
         for (const member of others) {
@@ -139,7 +139,7 @@ export class CommentModal extends Modal {
 
     private renderComment(list: HTMLElement, comment: DocComment): void {
         const item = list.createDiv('comment-item');
-        item.createEl('div', {
+        item.createDiv({
             text: `${comment.authorName} · ${new Date(comment.createdAt).toLocaleString()}`,
             cls: 'comment-meta',
         });
@@ -149,7 +149,7 @@ export class CommentModal extends Modal {
         this.renderBody(item, comment.body);
         const mentioned = this.mentionNames(comment);
         if (mentioned.length > 0) {
-            item.createEl('div', { text: `提及了 ${mentioned.join('、')}`, cls: 'comment-mentioned' });
+            item.createDiv({ text: `提及了 ${mentioned.join('、')}`, cls: 'comment-mentioned' });
         }
     }
 
