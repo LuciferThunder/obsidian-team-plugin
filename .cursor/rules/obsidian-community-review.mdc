@@ -6,7 +6,7 @@ alwaysApply: false
 
 # 社区扫描不要再犯
 
-扫描器不认仓库里的 eslint 覆盖。Vault 列举、读取、写入是披露，不要为了消警告删掉。
+扫描器不认仓库里的 eslint 覆盖。Vault 列举、读取、写入是披露，不要为了消掉 Recommendation 而删掉 `getMarkdownFiles` 或 `getFiles`。日报、月报和「把已有笔记分享到团队」都要列出库里的 Markdown 路径。README 的 Privacy 要写明这一点。
 
 - 源码里不要写 `console.log`。调试输出走 `devLog()`。设置里的「调试模式」只在 `npm run dev` 生效；`npm run build` 使用空的 `devLog`，正式包不输出这些日志。`console.error` 可以留。
 - 不要 `document.createElement`、`ownerDocument.createElement`，也不要 `createEl('div')` / `createEl('span')`。用全局 `createDiv` / `createSpan`；其它标签用 `createEl('button')` 等。这些函数是 Obsidian 全局，不要从 `obsidian` 导入。
@@ -18,4 +18,4 @@ alwaysApply: false
 - 不要写不改变类型的断言。`querySelector` 的结果用 `instanceof HTMLElement`。
 - CSS 不要 `!important`。提高选择器优先级，例如 `.markdown-source-view.mod-cm6 .cm-ySelectionCaret > .cm-ySelectionInfo`。
 
-发版不要在本机 `gh release create` 上传 `main.js`。版本号写入 manifest 和 versions.json，同步源码后只推 tag。该 tag 上的 `.github/workflows/release.yml` 执行 `npm ci && npm run build`，对 `main.js`、`styles.css`、`manifest.json` 做 `actions/attest-build-provenance`，再由 Actions 上传这三份附件。
+发版不要在本机 `gh release create` 上传 `main.js`。版本号写入 manifest 和 versions.json，同步源码后只推 tag。该 tag 上的 `.github/workflows/release.yml` 执行 `npm ci && npm run build`，对 `main.js`、`styles.css`、`manifest.json` 做 `actions/attest-build-provenance`，再由 Actions 上传这三份附件。Release 正文不能空：工作流要打开 `generate_release_notes`。已经发出的空说明用 `gh release edit <tag> --notes` 补上，不要为了补说明再打一个版本。
