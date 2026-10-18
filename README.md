@@ -82,6 +82,7 @@ To comply with Obsidian developer policies, this section describes network behav
 ### Privacy
 
 - Daily reports, monthly reports, and the picker for sharing an existing note list Markdown file paths in the vault. Contents are read only for notes included in a report or shared to the team drive.
+- If you check Remember account or Remember password, those values stay in this vault's plugin data. They are not uploaded by plugin sync.
 - Document content is sent only to your configured team server and (optionally) AI providers
 - Review your backend's data retention and privacy policies
 - When using AI summaries, content is sent to OpenAI or Anthropic under their terms of service

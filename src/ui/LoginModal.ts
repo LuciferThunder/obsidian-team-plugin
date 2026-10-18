@@ -9,6 +9,8 @@ export class LoginModal extends Modal {
     // Login fields
     private account = '';
     private password = '';
+    private rememberAccount = false;
+    private rememberPassword = false;
     private captchaInput = '';
     private captchaId = '';
 
@@ -39,6 +41,10 @@ export class LoginModal extends Modal {
 
     async onOpen() {
         this.modalEl.addClass('team-auth-modal');
+        this.rememberAccount = this.plugin.settings.rememberAccount;
+        this.rememberPassword = this.plugin.settings.rememberPassword;
+        if (this.rememberAccount) this.account = this.plugin.settings.savedAccount;
+        if (this.rememberPassword) this.password = this.plugin.settings.savedPassword;
         await this.loadCaptcha();
         this.renderLogin();
     }
@@ -85,6 +91,20 @@ export class LoginModal extends Modal {
                     .onChange(value => { this.password = value; });
                 text.inputEl.type = 'password';
             });
+
+        const rememberRow = contentEl.createDiv('team-remember-row');
+        this.addRememberToggle(rememberRow, '记住账号', this.rememberAccount, (on) => {
+            this.rememberAccount = on;
+            this.plugin.settings.rememberAccount = on;
+            if (!on) this.plugin.settings.savedAccount = '';
+            void this.plugin.saveSettings();
+        });
+        this.addRememberToggle(rememberRow, '记住密码', this.rememberPassword, (on) => {
+            this.rememberPassword = on;
+            this.plugin.settings.rememberPassword = on;
+            if (!on) this.plugin.settings.savedPassword = '';
+            void this.plugin.saveSettings();
+        });
 
         // Captcha
         this.renderCaptchaSection(contentEl, false);
@@ -250,11 +270,15 @@ export class LoginModal extends Modal {
                 new Notice(data.error || '重置失败');
                 return;
             }
-            this.password = '';
+            const newPassword = this.resetPassword;
             this.account = this.resetEmail.trim();
+            this.password = this.rememberPassword ? newPassword : '';
+            if (this.rememberAccount) this.plugin.settings.savedAccount = this.account;
+            this.plugin.settings.savedPassword = this.rememberPassword ? newPassword : '';
             this.resetCode = '';
             this.resetPassword = '';
             this.resetConfirmPassword = '';
+            await this.plugin.saveSettings();
             new Notice(data.message || '密码已重置，请登录');
             await this.loadCaptcha();
             this.renderLogin();
@@ -432,6 +456,7 @@ export class LoginModal extends Modal {
             this.plugin.settings.apiKey = data.token;
             this.plugin.settings.userId = data.user.id;
             this.plugin.settings.username = data.user.username;
+            this.storeRememberedLogin();
             await this.plugin.saveSettings();
 
             new Notice(`欢迎回来，${data.user.username}！`);
@@ -445,6 +470,30 @@ export class LoginModal extends Modal {
             console.error('Login error:', e);
             new Notice('登录请求失败，请检查网络和服务器地址');
         }
+    }
+
+    private addRememberToggle(
+        row: HTMLElement,
+        label: string,
+        checked: boolean,
+        onChange: (on: boolean) => void,
+    ): void {
+        const item = row.createEl('label', { cls: 'team-remember-item' });
+        const input = item.createEl('input', { type: 'checkbox' });
+        input.checked = checked;
+        item.createSpan({ text: label });
+        input.addEventListener('change', () => {
+            onChange(input.checked);
+        });
+    }
+
+    /** 勾选才写入；取消勾选时对应字段保持为空。退出登录不会清掉这里。 */
+    private storeRememberedLogin(): void {
+        const settings = this.plugin.settings;
+        settings.rememberAccount = this.rememberAccount;
+        settings.rememberPassword = this.rememberPassword;
+        settings.savedAccount = this.rememberAccount ? this.account.trim() : '';
+        settings.savedPassword = this.rememberPassword ? this.password : '';
     }
 
     private async handleRegister() {

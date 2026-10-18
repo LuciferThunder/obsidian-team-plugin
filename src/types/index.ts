@@ -13,6 +13,12 @@ export interface TeamPluginSettings {
     // User info
     userId: string;
     username: string;
+    /** 下次打开登录框时填回账号 */
+    rememberAccount: boolean;
+    savedAccount: string;
+    /** 下次打开登录框时填回密码。只写在本库插件数据里 */
+    rememberPassword: boolean;
+    savedPassword: string;
 
     // Current team
     currentTeamId: string;
@@ -47,6 +53,10 @@ export const DEFAULT_SETTINGS: TeamPluginSettings = {
     apiKey: '',
     userId: '',
     username: '',
+    rememberAccount: false,
+    savedAccount: '',
+    rememberPassword: false,
+    savedPassword: '',
     currentTeamId: '',
     aiProvider: 'dmxapi',
     aiApiKey: '',

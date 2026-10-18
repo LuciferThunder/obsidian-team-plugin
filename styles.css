@@ -575,6 +575,22 @@ body.theme-dark .team-view {
     width: 100%;
 }
 
+.team-remember-row {
+    display: flex;
+    gap: 18px;
+    margin: 2px 0 6px;
+    padding-left: 72px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+
+.team-remember-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
 .team-login-modal .team-auth-actions {
     border-top: 1px solid var(--background-modifier-border);
     margin-top: 8px;
